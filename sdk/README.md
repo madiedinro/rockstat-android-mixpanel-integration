@@ -1,7 +1,9 @@
-# Rockstat Android SDK (fork of mixpanel-android)
+# Rockstat Android SDK (modified Mixpanel Android SDK)
 
-> **This fork is for the Rockstat ingestion backend only. It is not meant to be used with
-> Mixpanel's service and is not supported by Mixpanel.**
+🇬🇧 English · [🇷🇺 Русский](README.ru.md)
+
+> **This is a modified version of the Mixpanel Android SDK, adapted for the Rockstat analytics
+> backend only. It is not meant to be used with Mixpanel's service and is not supported by Mixpanel.**
 >
 > It ships events, property names and session semantics that Mixpanel does not know about
 > (`$screen`, `Session Started`, `$session_id`, back-dated `time` on `Application Backgrounded`,
