@@ -1,0 +1,105 @@
+name: Mixpanel Android Pull Request and master branch CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout the code
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+    - name: Build all modules
+      timeout-minutes: 60
+      run: ./gradlew assemble
+    - name: Enable KVM
+      run: |
+        echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+        sudo udevadm control --reload-rules
+        sudo udevadm trigger --name-match=kvm
+    - name: Run Unit test
+      timeout-minutes: 60
+      uses: reactivecircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a  # v2
+      with:
+        api-level: 34
+        arch: x86_64
+        emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+        script: ./gradlew :analytics:createDebugCoverageReport
+    - name: Run OpenFeature Provider tests
+      timeout-minutes: 60
+      run: ./gradlew :openfeature-provider:test
+    - name: Run Common module tests
+      timeout-minutes: 60
+      run: ./gradlew :common:test
+    - name: Run analytics JVM unit tests
+      timeout-minutes: 60
+      run: ./gradlew :analytics:test
+    - name: Run Common ktlint check
+      timeout-minutes: 60
+      run: ./gradlew :common:ktlintCheck
+    - name: Lint
+      timeout-minutes: 60
+      run:  ./gradlew :analytics:lint
+    - name: AnimalSniffer (Java/Android API compatibility)
+      timeout-minutes: 60
+      run:  ./gradlew :analytics:animalsnifferRelease
+    - name: Verify published Kotlin compatibility
+      run:  ./gradlew verifyKotlinCompatibility
+    - name: Upload test report
+      uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7.0.0
+      if: always()
+      with:
+        name: Unit Test Report
+        path: analytics/build/reports/androidTests/connected
+    - name: Upload OpenFeature test report
+      uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7.0.0
+      if: always()
+      with:
+        name: OpenFeature Unit Test Report
+        path: openfeature-provider/build/reports/tests/
+    - name: Upload analytics JVM unit test report
+      uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7.0.0
+      if: always()
+      with:
+        name: Analytics JVM Unit Test Report
+        path: |
+          analytics/build/reports/tests/
+          analytics/build/test-results/
+    - name: Upload Common test report
+      uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7.0.0
+      if: always()
+      with:
+        name: Common Unit Test Report
+        path: common/build/reports/tests/
+    - name: Upload Common ktlint report
+      uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7.0.0
+      if: always()
+      with:
+        name: Common ktlint Report
+        path: common/build/reports/ktlint/
+    - name: Upload test coverage report
+      uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7.0.0
+      with:
+        name: Test Coverage Report
+        path: analytics/build/reports/coverage/debug/
+    - name: Upload lint report
+      uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7.0.0
+      with:
+        name: Lint Report
+        path: analytics/build/reports/lint-results-*.*
+    - name: Upload AnimalSniffer report
+      uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7.0.0
+      if: always()
+      with:
+        name: AnimalSniffer Report
+        path: analytics/build/reports/animalsniffer/
+    - name: Android docs
+      timeout-minutes: 60
+      run:  ./gradlew --info :analytics:androidJavadocs
+

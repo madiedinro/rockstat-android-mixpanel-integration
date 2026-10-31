@@ -1,0 +1,34 @@
+{
+  "analytics": {
+    "tag_prefix": "v",
+    "gradle_properties": "analytics/gradle.properties",
+    "changelog": "analytics/CHANGELOG.md",
+    "readme": "analytics/README.md",
+    "gradle_task_prefix": ":analytics:",
+    "artifact_id": "mixpanel-android"
+  },
+  "openfeature": {
+    "tag_prefix": "open-feature-v",
+    "gradle_properties": "openfeature-provider/gradle.properties",
+    "changelog": "openfeature-provider/CHANGELOG.md",
+    "readme": "openfeature-provider/README.md",
+    "gradle_task_prefix": ":openfeature-provider:",
+    "artifact_id": "mixpanel-android-openfeature"
+  },
+  "common": {
+    "tag_prefix": "common-v",
+    "gradle_properties": "common/gradle.properties",
+    "changelog": "common/CHANGELOG.md",
+    "readme": "common/README.md",
+    "gradle_task_prefix": ":common:",
+    "artifact_id": "mixpanel-android-common"
+  },
+  "session-replay": {
+    "tag_prefix": "session-replay-v",
+    "gradle_properties": "session-replay/gradle.properties",
+    "changelog": "session-replay/CHANGELOG.md",
+    "readme": "session-replay/README.md",
+    "gradle_task_prefix": ":session-replay:",
+    "artifact_id": "mixpanel-android-session-replay"
+  }
+}

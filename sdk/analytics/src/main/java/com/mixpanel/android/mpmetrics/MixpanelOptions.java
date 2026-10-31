@@ -1,0 +1,461 @@
+package com.mixpanel.android.mpmetrics;
+
+import static com.mixpanel.android.mpmetrics.ConfigurationChecker.LOGTAG;
+
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+
+import com.mixpanel.android.util.MPLog;
+import com.mixpanel.android.util.ProxyServerInteractor;
+
+import org.json.JSONObject;
+
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
+
+public class MixpanelOptions {
+
+    /**
+     * Property keys that are required for ingestion or identity resolution and will never be
+     * stripped by {@link Builder#excludeProperties(Set)}, even if a customer lists them.
+     */
+    public static final Set<String> RESERVED_PROPERTY_KEYS = Collections.unmodifiableSet(
+        new HashSet<>(Arrays.asList(
+            "token", "time", "distinct_id", "$device_id", "$user_id", "$had_persisted_distinct_id"
+        ))
+    );
+
+    private final String instanceName;
+    private final boolean optOutTrackingDefault;
+    private final JSONObject superProperties;
+    private final FeatureFlagOptions mFeatureFlagOptions;
+    private final AutocaptureOptions mAutocaptureOptions;
+    private final AutoTrackOptions mAutoTrackOptions;
+    private final DeviceIdProvider deviceIdProvider;
+    private final String serverURL;
+    private final ProxyServerInteractor proxyServerInteractor;
+    private final Set<String> excludeProperties;
+
+    private MixpanelOptions(Builder builder) {
+        this.instanceName = builder.instanceName;
+        this.optOutTrackingDefault = builder.optOutTrackingDefault;
+        this.superProperties = builder.superProperties;
+        this.deviceIdProvider = builder.deviceIdProvider;
+        this.serverURL = builder.serverURL;
+        this.proxyServerInteractor = builder.proxyServerInteractor;
+        this.mFeatureFlagOptions = builder.mFeatureFlagOptions;
+        this.mAutocaptureOptions = builder.mAutocaptureOptions;
+        this.mAutoTrackOptions = builder.mAutoTrackOptions;
+        this.excludeProperties = builder.excludeProperties;
+    }
+
+    public String getInstanceName() {
+        return instanceName;
+    }
+
+    public boolean isOptOutTrackingDefault() {
+        return optOutTrackingDefault;
+    }
+
+    public JSONObject getSuperProperties() {
+        // Defensive copy to prevent modification of the internal JSONObject
+        if (superProperties == null) {
+            return null;
+        }
+        try {
+            return new JSONObject(superProperties.toString());
+        } catch (Exception e) {
+            // This should ideally not happen if superProperties was a valid JSONObject
+            MPLog.e(LOGTAG, "Invalid super properties", e);
+            return null;
+        }
+    }
+
+    @Deprecated
+    public boolean areFeatureFlagsEnabled() {
+        return mFeatureFlagOptions.isEnabled();
+    }
+
+    @Deprecated
+    public JSONObject getFeatureFlagsContext() {
+        return mFeatureFlagOptions.getContext();
+    }
+
+    @NonNull
+    public FeatureFlagOptions getFeatureFlagOptions() {
+        return mFeatureFlagOptions;
+    }
+
+    /**
+     * Returns the autocapture options for this Mixpanel instance, or null if autocapture
+     * is not enabled.
+     *
+     * <p>Autocapture is disabled by default. It is only enabled when the caller
+     * explicitly passes an {@link AutocaptureOptions} instance via
+     * {@link Builder#autocaptureOptions(AutocaptureOptions)}.
+     *
+     * @return The {@link AutocaptureOptions} configuration, or null if not enabled.
+     */
+    @Nullable
+    public AutocaptureOptions getAutocaptureOptions() {
+        return mAutocaptureOptions;
+    }
+
+    /**
+     * Returns the custom device ID provider, or null if not set.
+     *
+     * @return The configured {@link DeviceIdProvider}, or null for default behavior.
+     */
+    @Nullable
+    /**
+     * Returns the automatic event configuration, or null when automatic events beyond the
+     * {@code $ae_*} set are disabled (the default).
+     *
+     * @return the {@link AutoTrackOptions}, or null.
+     */
+    public AutoTrackOptions getAutoTrackOptions() {
+        return mAutoTrackOptions;
+    }
+
+    public DeviceIdProvider getDeviceIdProvider() {
+        return deviceIdProvider;
+    }
+
+    /**
+     * Returns the server URL configured for this Mixpanel instance.
+     *
+     * @return The server URL, or null if not configured (will use default).
+     */
+    public String getServerURL() {
+        return serverURL;
+    }
+
+    /**
+     * Returns the proxy server interactor configured for this Mixpanel instance.
+     *
+     * @return The ProxyServerInteractor, or null if not configured.
+     */
+    public ProxyServerInteractor getProxyServerInteractor() {
+        return proxyServerInteractor;
+    }
+
+    /**
+     * Returns the set of property keys that will be stripped from every event before it is
+     * sent to Mixpanel. Returns an empty set if none were configured. The returned set is
+     * unmodifiable.
+     *
+     * @return The configured exclude set, or an empty unmodifiable set.
+     */
+    @NonNull
+    public Set<String> getExcludeProperties() {
+        return excludeProperties;
+    }
+
+    public static class Builder {
+        private String instanceName;
+        private boolean optOutTrackingDefault = false;
+        private JSONObject superProperties;
+        private FeatureFlagOptions mFeatureFlagOptions = new FeatureFlagOptions.Builder().build();
+        // Autocapture is disabled by default — null means disabled.
+        // Users opt in by passing an AutocaptureOptions instance.
+        private AutocaptureOptions mAutocaptureOptions = null;
+        // Automatic events (lifecycle, screens, sessions, system, ANR) are opt-in — null means disabled.
+        private AutoTrackOptions mAutoTrackOptions = null;
+        private DeviceIdProvider deviceIdProvider = null;
+        private String serverURL;
+        private ProxyServerInteractor proxyServerInteractor;
+        private Set<String> excludeProperties = Collections.emptySet();
+
+        public Builder() {
+        }
+
+        /**
+         * Sets the distinct instance name for the MixpanelAPI. This is useful if you want to
+         * manage multiple Mixpanel project instances.
+         *
+         * @param instanceName The unique name for the Mixpanel instance.
+         * @return This Builder instance for chaining.
+         */
+        public Builder instanceName(String instanceName) {
+            this.instanceName = instanceName;
+            return this;
+        }
+
+        /**
+         * Sets the default opt-out tracking state. If true, the SDK will not send any
+         * events or profile updates by default. This can be overridden at runtime.
+         *
+         * @param optOutTrackingDefault True to opt-out of tracking by default, false otherwise.
+         * @return This Builder instance for chaining.
+         */
+        public Builder optOutTrackingDefault(boolean optOutTrackingDefault) {
+            this.optOutTrackingDefault = optOutTrackingDefault;
+            return this;
+        }
+
+        /**
+         * Sets the super properties to be sent with every event.
+         * These properties are persistently stored.
+         *
+         * @param superProperties A JSONObject containing key-value pairs for super properties.
+         *                        The provided JSONObject will be defensively copied.
+         * @return This Builder instance for chaining.
+         */
+        public Builder superProperties(JSONObject superProperties) {
+            if (superProperties == null) {
+                this.superProperties = null;
+            } else {
+                try {
+                    // Defensive copy
+                    this.superProperties = new JSONObject(superProperties.toString());
+                } catch (Exception e) {
+                    // Log error or handle as appropriate if JSON is invalid
+                    this.superProperties = null;
+                }
+            }
+            return this;
+        }
+
+        /**
+         * Enables or disables the Mixpanel feature flags functionality.
+         *
+         * @param featureFlagsEnabled True to enable feature flags, false to disable.
+         * @return This Builder instance for chaining.
+         * @deprecated Use {@link #featureFlagOptions(FeatureFlagOptions)} instead.
+         */
+        @Deprecated
+        public Builder featureFlagsEnabled(boolean featureFlagsEnabled) {
+            this.mFeatureFlagOptions = new FeatureFlagOptions.Builder(mFeatureFlagOptions).enabled(featureFlagsEnabled).build();
+            return this;
+        }
+
+        /**
+         * Sets the context to be used for evaluating feature flags.
+         * This can include properties like distinct_id or other custom properties.
+         *
+         * @param featureFlagsContext A JSONObject containing key-value pairs for the feature flags context.
+         *                            The provided JSONObject will be defensively copied.
+         * @return This Builder instance for chaining.
+         * @deprecated Use {@link #featureFlagOptions(FeatureFlagOptions)} instead.
+         */
+        @Deprecated
+        public Builder featureFlagsContext(JSONObject featureFlagsContext) {
+            this.mFeatureFlagOptions = new FeatureFlagOptions.Builder(mFeatureFlagOptions).context(featureFlagsContext).build();
+            return this;
+        }
+
+        /**
+         * Sets the feature flag options for this Mixpanel instance.
+         *
+         * <p>This replaces any values previously set via {@link #featureFlagsEnabled(boolean)}
+         * and {@link #featureFlagsContext(JSONObject)}.
+         *
+         * @param featureFlagOptions The FeatureFlagOptions configuration.
+         * @return This Builder instance for chaining.
+         */
+        public Builder featureFlagOptions(FeatureFlagOptions featureFlagOptions) {
+            this.mFeatureFlagOptions = featureFlagOptions;
+            return this;
+        }
+
+        /**
+         * Sets the autocapture options for this Mixpanel instance.
+         *
+         * <p>Autocapture is disabled by default. Passing an {@link AutocaptureOptions} instance
+         * enables autocapture with the specified configuration. When enabled, the SDK automatically
+         * tracks user interactions (clicks, rage clicks, dead clicks) without manual instrumentation.
+         *
+         * <pre>{@code
+         * // Enable all autocapture with defaults
+         * .autocaptureOptions(new AutocaptureOptions.Builder().build())
+         *
+         * // Enable with custom configuration
+         * .autocaptureOptions(new AutocaptureOptions.Builder()
+         *     .rageClickOptions(new RageClickOptions.Builder()
+         *         .clickThreshold(5)
+         *         .build())
+         *     .deadClickOptions(new DeadClickOptions.Builder()
+         *         .enabled(false)
+         *         .build())
+         *     .build())
+         * }</pre>
+         *
+         * @param autocaptureOptions The AutocaptureOptions configuration.
+         * @return This Builder instance for chaining.
+         * @see AutocaptureOptions
+         */
+        public Builder autocaptureOptions(@NonNull AutocaptureOptions autocaptureOptions) {
+            if (autocaptureOptions == null) {
+                MPLog.w(LOGTAG, "autocaptureOptions must not be null, ignoring");
+                return this;
+            }
+            this.mAutocaptureOptions = autocaptureOptions;
+            return this;
+        }
+
+        /**
+         * Enables automatic events beyond the {@code $ae_*} set: application lifecycle, screens,
+         * durable sessions ({@code $session_id}), deep links, OS/memory/network/configuration
+         * changes, ANR detection and the Play install referrer. See {@link AutoTrackOptions} for
+         * the event list and the per-group switches.
+         *
+         * <pre>{@code
+         * new MixpanelOptions.Builder()
+         *         .autoTrackOptions(new AutoTrackOptions.Builder()
+         *                 .systemEvents(false)
+         *                 .sessionIdleTimeoutMs(15 * 60 * 1000)
+         *                 .build())
+         *         .build();
+         * }</pre>
+         *
+         * @param autoTrackOptions the configuration; pass {@code new AutoTrackOptions.Builder().build()} for all defaults.
+         * @return This Builder instance for chaining.
+         */
+        public Builder autoTrackOptions(@NonNull AutoTrackOptions autoTrackOptions) {
+            if (autoTrackOptions == null) {
+                throw new IllegalArgumentException("autoTrackOptions cannot be null");
+            }
+            this.mAutoTrackOptions = autoTrackOptions;
+            return this;
+        }
+
+        /**
+         * Sets a custom device ID provider.
+         *
+         * <p>Use this to control device ID generation instead of relying on the SDK's
+         * default behavior (random UUID).
+         *
+         * <p><b>Important:</b> The device ID strategy is an architectural decision that
+         * should be made at project inception, not retrofitted later. Adding a provider
+         * to an existing app may cause identity discontinuity.
+         *
+         * <p><b>Controlling Reset Behavior:</b>
+         * <ul>
+         *   <li>Return the <b>same value</b> each time = Device ID never changes</li>
+         *   <li>Return a <b>different value</b> each time = Device ID changes on reset</li>
+         * </ul>
+         *
+         * @param deviceIdProvider The provider to use, or null for default behavior.
+         * @return This Builder instance for chaining.
+         * @see DeviceIdProvider
+         */
+        public Builder deviceIdProvider(DeviceIdProvider deviceIdProvider) {
+            this.deviceIdProvider = deviceIdProvider;
+            return this;
+        }
+
+        /**
+         * Sets a custom server URL for Mixpanel API requests.
+         *
+         * <p>Use this to route data to a different Mixpanel region or your own proxy server.
+         * Defaults to {@code https://api.mixpanel.com}.
+         *
+         * <pre>{@code
+         * // Mixpanel regional server (e.g., EU)
+         * .serverURL("https://api-eu.mixpanel.com")
+         *
+         * // Custom proxy server
+         * .serverURL("https://my-proxy.example.com")
+         * }</pre>
+         *
+         * @param serverURL The base URL for API requests.
+         * @return This Builder instance for chaining.
+         */
+        public Builder serverURL(@NonNull String serverURL) {
+            this.serverURL = serverURL;
+            return this;
+        }
+
+        /**
+         * Sets a custom server URL with a {@link ProxyServerInteractor} for advanced proxy handling.
+         *
+         * <p>Use this when your proxy server requires custom request headers or you need to
+         * listen to API responses.
+         *
+         * <pre>{@code
+         * .serverURL("https://my-proxy.example.com", new ProxyServerInteractor() {
+         *     @Override
+         *     public Map<String, String> getProxyRequestHeaders() {
+         *         Map<String, String> headers = new HashMap<>();
+         *         headers.put("Authorization", "Bearer " + token);
+         *         return headers;
+         *     }
+         *
+         *     @Override
+         *     public void onProxyResponse(String url, int responseCode) {
+         *         // Handle response
+         *     }
+         * })
+         * }</pre>
+         *
+         * @param serverURL             The base URL for the proxy server.
+         * @param proxyServerInteractor Handler for custom headers and response callbacks.
+         * @return This Builder instance for chaining.
+         */
+        public Builder serverURL(
+                @NonNull String serverURL,
+                @Nullable ProxyServerInteractor proxyServerInteractor
+        ) {
+            this.serverURL = serverURL;
+            this.proxyServerInteractor = proxyServerInteractor;
+            return this;
+        }
+
+        /**
+         * Sets a set of property keys that should be stripped from outgoing payloads before
+         * they are sent to Mixpanel.
+         *
+         * <p>The filter is applied at two chokepoints:
+         * <ul>
+         *   <li>Every event (super properties, caller properties, referrer properties, and
+         *       SDK auto-properties like {@code $screen_height} / {@code $lib_version}).</li>
+         *   <li>The {@code $set} bag on {@code People.set(...)}, which auto-merges SDK
+         *       device info such as {@code $android_lib_version} and {@code $android_model}.
+         *       The mutating operators ({@code $set_once}, {@code $add}, {@code $append},
+         *       {@code $union}, {@code $remove}, {@code $unset}, {@code $merge},
+         *       {@code $delete}) are pass-through — they don't merge device info, and
+         *       filtering inside them would change semantics (e.g. silently dropping a name
+         *       from an {@code $unset} list). Group updates are not filtered because they
+         *       never merge device info.</li>
+         * </ul>
+         *
+         * <p>Use this to reduce per-payload size or to suppress properties the project has
+         * no interest in. Matching is exact, case-sensitive, and applied only to top-level
+         * property keys (values that are themselves objects are not traversed). Keys in
+         * {@link MixpanelOptions#RESERVED_PROPERTY_KEYS} are never stripped, even if listed.
+         *
+         * <p><b>Recommended: do not strip {@code mp_lib} or {@code $lib_version}.</b> Mixpanel
+         * does not need them for ingestion or identity resolution, so stripping them is
+         * permitted — but they are how Mixpanel identifies which SDK (and which version)
+         * produced an event. Removing them limits reporting accuracy (e.g. per-platform
+         * breakdowns) and makes it harder for support to debug issues on your project. If
+         * either key is included here, the SDK logs a warning at instance creation time.
+         *
+         * <p>A {@code null} or empty set disables filtering entirely with zero per-event
+         * overhead.
+         *
+         * @param excludeProperties The set of property keys to strip.
+         * @return This Builder instance for chaining.
+         */
+        public Builder excludeProperties(@Nullable Set<String> excludeProperties) {
+            if (excludeProperties == null || excludeProperties.isEmpty()) {
+                this.excludeProperties = Collections.emptySet();
+            } else {
+                // Defensive copy + immutable wrapper so callers can't mutate post-build.
+                this.excludeProperties = Collections.unmodifiableSet(new HashSet<>(excludeProperties));
+            }
+            return this;
+        }
+
+        /**
+         * Builds and returns a {@link MixpanelOptions} instance with the configured settings.
+         *
+         * @return A new {@link MixpanelOptions} instance.
+         */
+        public MixpanelOptions build() {
+            return new MixpanelOptions(this);
+        }
+    }
+}
