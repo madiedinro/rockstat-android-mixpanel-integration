@@ -8,6 +8,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.net.ConnectivityManager;
 import android.net.Network;
@@ -15,12 +16,11 @@ import android.net.NetworkCapabilities;
 import android.net.NetworkInfo;
 import android.os.BatteryManager;
 import android.os.Build;
-import com.mixpanel.android.util.MPLog;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import com.mixpanel.android.mpmetrics.MixpanelAPI;
+import com.mixpanel.android.util.MPLog;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -52,34 +52,73 @@ import java.util.TimeZone;
     static final String EVENT_BATTERY_OKAY = "Battery Okay";
 
     private static final String LOGTAG = "MixpanelAPI.AutoTrack";
-    private static final String PREFS_NAME = "com.mixpanel.android.mpmetrics.MixpanelAPI.AutoTrack.System";
     private static final String KEY_OS_RELEASE = "os_release";
     private static final String KEY_OS_SDK_INT = "os_sdk_int";
     private static final String KEY_OS_BUILD = "os_build";
 
     private final Application mApp;
     private final MixpanelAPI mMixpanel;
-    private final SharedPreferences mPrefs;
+    private final SharedPreferences mPrefs; // the instance's AutoTrack prefs: OS state is per instance
+    private final Object mLock = new Object();
 
     private Configuration mLastConfig;
     private String mLastTimeZone = TimeZone.getDefault().getID();
     private Boolean mLastOnline;
     private String mLastTransport;
+    private Network mCurrentNetwork; // API 24+: the default network we last reported
 
-    static SystemEventTracker install(Application app, MixpanelAPI mixpanel) {
-        final SystemEventTracker tracker = new SystemEventTracker(app, mixpanel);
-        app.registerComponentCallbacks(tracker);
-        tracker.registerNetworkCallback();
-        tracker.registerSystemBroadcasts();
+    // registered listeners, kept so stop() can remove them
+    private Object mNetworkCallback; // ConnectivityManager.NetworkCallback on API 24+
+    private BroadcastReceiver mConnectivityReceiver; // below API 24
+    private BroadcastReceiver mSystemReceiver;
+    private boolean mRunning;
+
+    static SystemEventTracker install(Application app, MixpanelAPI mixpanel, SharedPreferences prefs) {
+        final SystemEventTracker tracker = new SystemEventTracker(app, mixpanel, prefs);
+        tracker.start();
         tracker.trackOsUpdate();
         return tracker;
     }
 
-    private SystemEventTracker(Application app, MixpanelAPI mixpanel) {
+    private SystemEventTracker(Application app, MixpanelAPI mixpanel, SharedPreferences prefs) {
         mApp = app;
         mMixpanel = mixpanel;
-        mPrefs = app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        mPrefs = prefs;
         mLastConfig = new Configuration(app.getResources().getConfiguration());
+    }
+
+    /** Registers the callbacks and receivers. Idempotent. */
+    void start() {
+        synchronized (mLock) {
+            if (mRunning) {
+                return;
+            }
+            mRunning = true;
+        }
+        try {
+            mApp.registerComponentCallbacks(this);
+        } catch (Exception e) {
+            MPLog.e(LOGTAG, "Cannot register component callbacks", e);
+        }
+        registerNetworkCallback();
+        registerSystemBroadcasts();
+    }
+
+    /** Unregisters everything: used while the user has opted out, nothing is observed then. */
+    void stop() {
+        synchronized (mLock) {
+            if (!mRunning) {
+                return;
+            }
+            mRunning = false;
+        }
+        try {
+            mApp.unregisterComponentCallbacks(this);
+        } catch (Exception e) {
+            MPLog.e(LOGTAG, "Cannot unregister component callbacks", e);
+        }
+        unregisterNetworkCallback();
+        unregisterSystemBroadcasts();
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -110,7 +149,9 @@ import java.util.TimeZone;
             put(props, "os_version", release);
             put(props, "sdk_int", Build.VERSION.SDK_INT);
             put(props, "os_build", build);
-            put(props, "security_patch", Build.VERSION.SECURITY_PATCH);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                put(props, "security_patch", Build.VERSION.SECURITY_PATCH);
+            }
             track(EVENT_OS_UPDATED, props);
         }
 
@@ -267,47 +308,103 @@ import java.util.TimeZone;
         if (cm == null) {
             return;
         }
+        // The SDK manifest does not declare ACCESS_NETWORK_STATE (it is optional for the host).
+        // Both the default-network callback and getActiveNetworkInfo() need it; without it they
+        // throw SecurityException, so skip network events rather than risk the host app.
+        if (mApp.checkCallingOrSelfPermission(android.Manifest.permission.ACCESS_NETWORK_STATE)
+                != PackageManager.PERMISSION_GRANTED) {
+            log("ACCESS_NETWORK_STATE not granted, skipping " + EVENT_NETWORK_CHANGED);
+            return;
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            cm.registerDefaultNetworkCallback(new ConnectivityManager.NetworkCallback() {
+            final ConnectivityManager.NetworkCallback callback = new ConnectivityManager.NetworkCallback() {
                 @Override
                 public void onCapabilitiesChanged(@NonNull Network network,
                                                   @NonNull NetworkCapabilities caps) {
-                    onNetwork(true, transportOf(caps),
-                            !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED),
-                            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED));
+                    try {
+                        synchronized (mLock) {
+                            mCurrentNetwork = network;
+                        }
+                        onNetwork(true, transportOf(caps),
+                                !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED),
+                                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED));
+                    } catch (Exception e) {
+                        MPLog.e(LOGTAG, "onCapabilitiesChanged failed", e);
+                    }
                 }
 
                 @Override
                 public void onLost(@NonNull Network network) {
-                    onNetwork(false, "none", false, false);
+                    try {
+                        // During a Wi-Fi -> cellular handover the old network is reported lost
+                        // well after the new default is up: only the current default counts.
+                        synchronized (mLock) {
+                            if (mCurrentNetwork != null && !mCurrentNetwork.equals(network)) {
+                                return;
+                            }
+                            mCurrentNetwork = null;
+                        }
+                        onNetwork(false, "none", false, false);
+                    } catch (Exception e) {
+                        MPLog.e(LOGTAG, "onLost failed", e);
+                    }
                 }
-            });
+            };
+            cm.registerDefaultNetworkCallback(callback);
+            mNetworkCallback = callback;
         } else {
-            registerReceiver(new BroadcastReceiver() {
+            final BroadcastReceiver receiver = new BroadcastReceiver() {
                 @Override
                 @SuppressWarnings("deprecation")
                 public void onReceive(Context context, Intent intent) {
-                    final NetworkInfo info = cm.getActiveNetworkInfo();
-                    final boolean online = info != null && info.isConnected();
-                    onNetwork(online, online ? legacyTransport(info.getType()) : "none",
-                            cm.isActiveNetworkMetered(), online);
+                    try {
+                        final NetworkInfo info = cm.getActiveNetworkInfo();
+                        final boolean online = info != null && info.isConnected();
+                        onNetwork(online, online ? legacyTransport(info.getType()) : "none",
+                                cm.isActiveNetworkMetered(), online);
+                    } catch (Exception e) {
+                        MPLog.e(LOGTAG, "connectivity receiver failed", e);
+                    }
                 }
-            }, new IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION));
+            };
+            registerReceiver(receiver, new IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION));
+            mConnectivityReceiver = receiver;
         }
     }
 
-    private synchronized void onNetwork(boolean online, String transport, boolean metered,
-                                        boolean validated) {
-        final boolean initial = mLastOnline == null;
-        if (!initial && mLastOnline == online && transport.equals(mLastTransport)) {
-            return; // capability churn (signal strength etc.), not a status change
+    private void unregisterNetworkCallback() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && mNetworkCallback != null) {
+                final ConnectivityManager cm =
+                        (ConnectivityManager) mApp.getSystemService(Context.CONNECTIVITY_SERVICE);
+                if (cm != null) {
+                    cm.unregisterNetworkCallback((ConnectivityManager.NetworkCallback) mNetworkCallback);
+                }
+                mNetworkCallback = null;
+            }
+            if (mConnectivityReceiver != null) {
+                mApp.unregisterReceiver(mConnectivityReceiver);
+                mConnectivityReceiver = null;
+            }
+        } catch (Exception e) {
+            MPLog.e(LOGTAG, "Cannot unregister network callback", e);
         }
-        final String previousTransport = mLastTransport;
-        mLastOnline = online;
-        mLastTransport = transport;
-        if (initial) {
-            log("network: initial state online=" + online + " transport=" + transport);
-            return;
+    }
+
+    private void onNetwork(boolean online, String transport, boolean metered, boolean validated) {
+        final String previousTransport;
+        synchronized (mLock) {
+            final boolean initial = mLastOnline == null;
+            if (!initial && mLastOnline == online && transport.equals(mLastTransport)) {
+                return; // capability churn (signal strength etc.), not a status change
+            }
+            previousTransport = mLastTransport;
+            mLastOnline = online;
+            mLastTransport = transport;
+            if (initial) {
+                log("network: initial state online=" + online + " transport=" + transport);
+                return;
+            }
         }
         final JSONObject props = new JSONObject();
         put(props, "online", online);
@@ -355,25 +452,44 @@ import java.util.TimeZone;
         filter.addAction(Intent.ACTION_TIMEZONE_CHANGED);
         filter.addAction(Intent.ACTION_BATTERY_LOW);
         filter.addAction(Intent.ACTION_BATTERY_OKAY);
-        registerReceiver(new BroadcastReceiver() {
+        final BroadcastReceiver receiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
-                final String action = intent.getAction();
-                if (Intent.ACTION_TIMEZONE_CHANGED.equals(action)) {
-                    final String timeZone = TimeZone.getDefault().getID();
-                    final JSONObject props = new JSONObject();
-                    put(props, "previous_timezone", mLastTimeZone);
-                    put(props, "timezone", timeZone);
-                    put(props, "offset_minutes", TimeZone.getDefault().getRawOffset() / 60000);
-                    mLastTimeZone = timeZone;
-                    track(EVENT_TIMEZONE_CHANGED, props);
-                } else if (Intent.ACTION_BATTERY_LOW.equals(action)) {
-                    track(EVENT_BATTERY_LOW, batteryProperties());
-                } else if (Intent.ACTION_BATTERY_OKAY.equals(action)) {
-                    track(EVENT_BATTERY_OKAY, batteryProperties());
+                try {
+                    final String action = intent == null ? null : intent.getAction();
+                    if (Intent.ACTION_TIMEZONE_CHANGED.equals(action)) {
+                        final String timeZone = TimeZone.getDefault().getID();
+                        final JSONObject props = new JSONObject();
+                        synchronized (mLock) {
+                            put(props, "previous_timezone", mLastTimeZone);
+                            mLastTimeZone = timeZone;
+                        }
+                        put(props, "timezone", timeZone);
+                        put(props, "offset_minutes", TimeZone.getDefault().getRawOffset() / 60000);
+                        track(EVENT_TIMEZONE_CHANGED, props);
+                    } else if (Intent.ACTION_BATTERY_LOW.equals(action)) {
+                        track(EVENT_BATTERY_LOW, batteryProperties());
+                    } else if (Intent.ACTION_BATTERY_OKAY.equals(action)) {
+                        track(EVENT_BATTERY_OKAY, batteryProperties());
+                    }
+                } catch (Exception e) {
+                    MPLog.e(LOGTAG, "system broadcast receiver failed", e);
                 }
             }
-        }, filter);
+        };
+        registerReceiver(receiver, filter);
+        mSystemReceiver = receiver;
+    }
+
+    private void unregisterSystemBroadcasts() {
+        try {
+            if (mSystemReceiver != null) {
+                mApp.unregisterReceiver(mSystemReceiver);
+                mSystemReceiver = null;
+            }
+        } catch (Exception e) {
+            MPLog.e(LOGTAG, "Cannot unregister system broadcasts", e);
+        }
     }
 
     private JSONObject batteryProperties() {

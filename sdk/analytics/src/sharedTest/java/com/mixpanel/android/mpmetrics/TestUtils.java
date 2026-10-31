@@ -51,6 +51,13 @@ public class TestUtils {
             final SharedPreferences timeSharedPrefs = context.getSharedPreferences(timeEventsPrefsName, Context.MODE_PRIVATE);
             timeSharedPrefs.edit().clear().commit();
 
+            // The rockstat fork persists $mp_session_id and the automatic-event state; a previous
+            // run within the idle timeout would otherwise be restored into this test.
+            final String sessionPrefsName = "com.mixpanel.android.mpmetrics.MixpanelAPI.Session_" + instanceKey;
+            context.getSharedPreferences(sessionPrefsName, Context.MODE_PRIVATE).edit().clear().commit();
+            final String autoTrackPrefsName = "com.mixpanel.android.mpmetrics.MixpanelAPI.AutoTrack_" + instanceKey;
+            context.getSharedPreferences(autoTrackPrefsName, Context.MODE_PRIVATE).edit().clear().commit();
+
             final String mixpanelPrefsName = "com.mixpanel.android.mpmetrics.Mixpanel";
             final SharedPreferences mpSharedPrefs = context.getSharedPreferences(mixpanelPrefsName, Context.MODE_PRIVATE);
             mpSharedPrefs.edit().clear().putBoolean(token, true).putBoolean("has_launched", true).apply();

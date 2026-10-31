@@ -25,8 +25,18 @@ import org.json.JSONObject;
 
     private InstallReferrerTracker() { }
 
-    static void trackOnce(Context context, MixpanelAPI mixpanel, SharedPreferences prefs) {
+    /**
+     * @param freshInstall false when the package had already been updated before this SDK first
+     *     ran: the referrer would describe an install from the past, so it is recorded as done
+     *     without sending anything.
+     */
+    static void trackOnce(Context context, MixpanelAPI mixpanel, SharedPreferences prefs, boolean freshInstall) {
         if (prefs.getBoolean(KEY_DONE, false)) {
+            return;
+        }
+        if (!freshInstall) {
+            MPLog.v(LOGTAG, "not a fresh install, skipping " + EVENT_INSTALL_ATTRIBUTED);
+            prefs.edit().putBoolean(KEY_DONE, true).apply();
             return;
         }
         try {

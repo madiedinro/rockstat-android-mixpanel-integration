@@ -1,1 +1,3 @@
 -dontwarn com.mixpanel.**
+# Play install referrer is compileOnly: apps without it must not fail R8 on the referencing class
+-dontwarn com.android.installreferrer.**

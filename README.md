@@ -34,7 +34,7 @@ Full details: [`sdk/README.md`](sdk/README.md), [`sdk/analytics/CHANGELOG.md`](s
 
 | Group | Events | Key properties |
 | --- | --- | --- |
-| lifecycle | `Application Installed`, `Application Updated`, `Application Opened`, `Application Backgrounded` | `version`, `build`, `from_background`, `session_length_s`, `previous_version`; a kill in the foreground is back-filled with `reason=process_killed` |
+| lifecycle | `Application Installed`, `Application Updated`, `Application Opened`, `Application Backgrounded` | `version`, `build`, `from_background`, `session_length_s`, `previous_version`, `previous_build`; a kill in the foreground is back-filled with `reason=process_killed` |
 | sessions | `Session Started`, `Session Ended` (back-dated on timeout / process death) | `reason`, `session_length_s`; super properties `$session_id`, `$session_start` on every event |
 | screens | `$screen`, `Screen Left` | `$screen_name`, `$screen_class`, `duration_s` |
 | deep links | `Deep Link Opened` | `url`, `referrer` |
@@ -95,8 +95,8 @@ git subtree pull --prefix=sdk https://github.com/mixpanel/mixpanel-android.git m
 
 This repository started as Mixpanel's `sample-android-mixpanel-integration` for SDK 5.x
 (push notifications, in-app messages, the `decide` endpoint). Those features left the SDK in 6.0 /
-7.0, so Firebase, `google-services.json`, `TakeoverInAppActivity` and `MixpanelFCMMessagingService`
-are gone. The sample was then upgraded to SDK 8.12.0, turned into a debug playground, and finally
+7.0, so Firebase, `TakeoverInAppActivity` and `MixpanelFCMMessagingService` are gone
+(`google-services.json` is no longer used and is git-ignored). The sample was then upgraded to SDK 8.12.0, turned into a debug playground, and finally
 paired with the Rockstat fork of the SDK in `sdk/`.
 
 ## License

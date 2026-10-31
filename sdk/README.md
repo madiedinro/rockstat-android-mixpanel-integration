@@ -18,7 +18,7 @@ repository, never to Maven Central).
 
 Sample app that exercises every feature below:
 [rockstat-android-mixpanel-integration](https://github.com/rockstat/rockstat-android-mixpanel-integration)
-(this fork lives on its `sdk` branch).
+(this fork lives there in the `sdk/` directory as a git subtree).
 
 ## What this fork changes
 
@@ -59,17 +59,19 @@ MixpanelAPI mp = MixpanelAPI.getInstance(context, TOKEN, trackAutomaticEvents, o
 
 | Group (builder switch) | Events | Key properties |
 | --- | --- | --- |
-| `lifecycleEvents` | `Application Installed`, `Application Updated`, `Application Opened`, `Application Backgrounded` | `version`, `build`, `from_background`, `session_length_s`, `previous_version`, `previous_build`; a kill in the foreground is back-filled with `reason=process_killed` and a past `time` |
+| `lifecycleEvents` | `Application Installed`, `Application Updated`, `Application Opened`, `Application Backgrounded` | `version`, `build`, `from_background`, `session_length_s`, `previous_version`, `previous_build`; a kill in the foreground is back-filled with `reason=process_killed` and a past `time`. An app that adopts the SDK after it was already installed gets `Application Updated` (without `previous_*`) on first run, not `Application Installed` |
 | `sessionEvents` | `Session Started`, `Session Ended` | `reason` (`first_launch`, `timeout`, `reset`), `session_length_s`; `Session Ended` is back-dated to the last activity when the timeout is noticed later. Super properties `$session_id`, `$session_start` on every event |
-| `screenEvents` | `$screen`, `Screen Left` | `$screen_name` (Activity label), `$screen_class`, `duration_s` |
+| `screenEvents` | `$screen`, `Screen Left` | `$screen_name` (the Activity's own `android:label`, else its class name), `$screen_class`, `duration_s`; deduplicated per Activity class |
 | `deepLinkEvents` | `Deep Link Opened` | `url`, `referrer` |
-| `systemEvents` | `OS Updated`, `Memory Warning`, `Configuration Changed`, `Network Status Changed`, `Time Zone Changed`, `Battery Low`, `Battery Okay` | `previous_os_version`/`os_version`/`security_patch`; `level_name`/`available_mb`/`heap_used_mb`; `changed[]`/`orientation`/`dark_mode`/`locale`/`font_scale`; `online`/`transport`/`previous_transport`/`metered`/`validated`; `previous_timezone`/`timezone`; `battery_percent`/`charging` |
-| `anrTimeoutMs` (0 = off) | `ANR Detected` | `blocked_ms`, `main_thread_stack` (top 12 frames); skipped while a debugger is attached |
-| `installReferrerEvent` | `Install Attributed` | `referrer`, `referrer_click_ts`, `install_begin_ts`, `google_play_instant`, `install_version`; requires `com.android.installreferrer:installreferrer` on the app classpath (the SDK only `compileOnly`-depends on it and checks for the class at runtime) |
+| `systemEvents` | `OS Updated`, `Memory Warning`, `Configuration Changed`, `Network Status Changed`, `Time Zone Changed`, `Battery Low`, `Battery Okay` | `previous_os_version`/`os_version`/`security_patch`; `level_name`/`available_mb`/`heap_used_mb`; `changed[]`/`orientation`/`dark_mode`/`locale`/`font_scale`; `online`/`transport`/`previous_transport`/`metered`/`validated`; `previous_timezone`/`timezone`; `battery_percent`/`charging`. `Network Status Changed` needs `ACCESS_NETWORK_STATE` in the app manifest, otherwise it is skipped |
+| `anrTimeoutMs` (0 = off) | `ANR Detected` | `blocked_ms` (uptime clock), `main_thread_stack` (top 12 frames); confirmed by a second check, skipped while a debugger is attached |
+| `installReferrerEvent` | `Install Attributed` | `referrer`, `referrer_click_ts`, `install_begin_ts`, `google_play_instant`, `install_version`; requires `com.android.installreferrer:installreferrer` on the app classpath (the SDK only `compileOnly`-depends on it and checks for the class at runtime); sent only for a fresh install, never for an existing install that adopted the SDK |
 
 These events are ordinary `track()` calls: they are not gated by the `trackAutomaticEvents` flag,
 carry all super properties, and go to whatever `EventsEndpoint` is configured. `MixpanelAPI.reset()`
-ends the current automatic session and starts a new one. `MixpanelAPI.getAutoTrackSessionId()`
+ends the current automatic session under the old identity and starts a new one under the new one.
+`optOutTracking()` stops the system observers and the ANR watchdog; `optInTracking()` restarts
+them and re-registers `$session_id` / `$session_start`. `MixpanelAPI.getAutoTrackSessionId()`
 returns the current `$session_id` (or `null` when session events are off).
 
 Everything is package-private except `AutoTrackOptions` and `getAutoTrackSessionId()`. Internals
@@ -100,7 +102,7 @@ Consumers add `mavenLocal()` (or your private repository) and depend on
 ```sh
 git remote add upstream https://github.com/mixpanel/mixpanel-android.git
 git fetch upstream
-git rebase upstream/master   # fork changes are a single commit on top of upstream
+git rebase upstream/master   # fork changes are the commits on top of upstream
 ```
 
 Files touched by the fork: `MixpanelAPI.java`, `MixpanelOptions.java`, `MPConfig.java`,

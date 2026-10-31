@@ -104,21 +104,22 @@ public class MixpanelOptions {
     }
 
     /**
-     * Returns the custom device ID provider, or null if not set.
-     *
-     * @return The configured {@link DeviceIdProvider}, or null for default behavior.
-     */
-    @Nullable
-    /**
      * Returns the automatic event configuration, or null when automatic events beyond the
      * {@code $ae_*} set are disabled (the default).
      *
      * @return the {@link AutoTrackOptions}, or null.
      */
+    @Nullable
     public AutoTrackOptions getAutoTrackOptions() {
         return mAutoTrackOptions;
     }
 
+    /**
+     * Returns the custom device ID provider, or null if not set.
+     *
+     * @return The configured {@link DeviceIdProvider}, or null for default behavior.
+     */
+    @Nullable
     public DeviceIdProvider getDeviceIdProvider() {
         return deviceIdProvider;
     }
@@ -315,7 +316,8 @@ public class MixpanelOptions {
          */
         public Builder autoTrackOptions(@NonNull AutoTrackOptions autoTrackOptions) {
             if (autoTrackOptions == null) {
-                throw new IllegalArgumentException("autoTrackOptions cannot be null");
+                MPLog.w(LOGTAG, "autoTrackOptions must not be null, ignoring");
+                return this;
             }
             this.mAutoTrackOptions = autoTrackOptions;
             return this;

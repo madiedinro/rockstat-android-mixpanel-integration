@@ -4,6 +4,7 @@ import android.os.Debug;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
+import android.os.SystemClock;
 
 import com.mixpanel.android.util.MPLog;
 
@@ -11,6 +12,7 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -18,6 +20,10 @@ import java.util.concurrent.atomic.AtomicLong;
  * exceptions; an ANR never throws. The watchdog posts a tick to the main looper from its own
  * HandlerThread and checks after {@code timeoutMs} whether the tick ran. The event carries the top
  * of the main thread's stack. Detection is skipped while a debugger is attached.
+ *
+ * <p>Times come from {@link SystemClock#uptimeMillis()}, the clock the main looper runs on, so a
+ * frozen process (Android 11+ cached-app freezer, deep doze) does not read as an ANR. A freeze is
+ * reported only after a second check confirms the tick still has not run.
  */
 /* package */ final class AnrWatchdog {
 
@@ -33,6 +39,7 @@ import java.util.concurrent.atomic.AtomicLong;
     private final Handler mWorker;
     private final AtomicLong mTick = new AtomicLong();
     private final Runnable mTicker = mTick::incrementAndGet;
+    private final AtomicBoolean mRunning = new AtomicBoolean(true);
 
     static AnrWatchdog start(MixpanelAPI mixpanel, long timeoutMs) {
         final HandlerThread thread = new HandlerThread("MixpanelAPI.AnrWatchdog");
@@ -48,16 +55,43 @@ import java.util.concurrent.atomic.AtomicLong;
         mWorker = new Handler(workerLooper);
     }
 
-    // runs on the worker thread
-    private void check() {
-        final long before = mTick.get();
-        final long postedAt = System.currentTimeMillis();
-        mMainHandler.post(mTicker);
-        mWorker.postDelayed(() -> verify(before, postedAt), mTimeoutMs);
+    /** Stops checking (opt-out) and quits the worker thread. The watchdog cannot be restarted. */
+    void stop() {
+        if (mRunning.compareAndSet(true, false)) {
+            mWorker.removeCallbacksAndMessages(null);
+            mMainHandler.removeCallbacks(mTicker);
+            mWorker.getLooper().quitSafely();
+        }
+    }
+
+    /** Pauses checking without quitting the thread; {@link #resume()} restarts it. */
+    void pause() {
+        mRunning.set(false);
+        mWorker.removeCallbacksAndMessages(null);
+    }
+
+    void resume() {
+        if (mRunning.compareAndSet(false, true)) {
+            mWorker.post(this::check);
+        }
     }
 
     // runs on the worker thread
-    private void verify(long before, long postedAt) {
+    private void check() {
+        if (!mRunning.get()) {
+            return;
+        }
+        final long before = mTick.get();
+        final long postedAt = SystemClock.uptimeMillis();
+        mMainHandler.post(mTicker);
+        mWorker.postDelayed(() -> verify(before, postedAt, false), mTimeoutMs);
+    }
+
+    // runs on the worker thread
+    private void verify(long before, long postedAt, boolean confirmed) {
+        if (!mRunning.get()) {
+            return;
+        }
         try {
             if (mTick.get() != before) {
                 check(); // responsive
@@ -67,7 +101,13 @@ import java.util.concurrent.atomic.AtomicLong;
                 check(); // paused in the debugger, not a real ANR
                 return;
             }
-            report(System.currentTimeMillis() - postedAt);
+            if (!confirmed) {
+                // Re-check shortly: if the whole process was frozen, the tick runs right after
+                // thaw and this second look sees it. A real ANR is still stuck.
+                mWorker.postDelayed(() -> verify(before, postedAt, true), RECOVERY_POLL_MS);
+                return;
+            }
+            report(SystemClock.uptimeMillis() - postedAt);
             waitForRecovery(before, postedAt);
         } catch (Exception e) {
             MPLog.e(LOGTAG, "ANR check failed", e);
@@ -77,11 +117,14 @@ import java.util.concurrent.atomic.AtomicLong;
 
     // runs on the worker thread: one freeze yields one event
     private void waitForRecovery(long before, long postedAt) {
+        if (!mRunning.get()) {
+            return;
+        }
         if (mTick.get() == before) {
             mWorker.postDelayed(() -> waitForRecovery(before, postedAt), RECOVERY_POLL_MS);
             return;
         }
-        MPLog.v(LOGTAG, "main thread recovered after " + (System.currentTimeMillis() - postedAt) + " ms");
+        MPLog.v(LOGTAG, "main thread recovered after " + (SystemClock.uptimeMillis() - postedAt) + " ms");
         check();
     }
 

@@ -168,10 +168,126 @@ public class AutoTrackSessionTest {
         assertNotEquals(id, session.getSessionId());
     }
 
+    @Test
+    public void touchKeepsSessionAliveAcrossWhatWouldBeATimeout() {
+        AutoTrackSession session = newSession();
+        session.restore(T0);
+        String id = session.getSessionId();
+
+        // user active every 20 minutes for two hours: never idle for 30
+        long t = T0;
+        for (int i = 0; i < 6; i++) {
+            t += 20 * 60_000;
+            session.touch(t);
+        }
+        session.onBackground(t);
+        session.onForeground(t + IDLE - 1);
+
+        assertEquals(id, session.getSessionId());
+        assertEquals(1, mListener.started.size());
+        assertTrue(mListener.ended.isEmpty());
+    }
+
+    @Test
+    public void stateIsPersistedBeforeListenersRun() {
+        // Crash safety: when the listener tracks the event the store must already describe the new session.
+        final MapStore store = mStore;
+        AutoTrackSession.Listener checking = new AutoTrackSession.Listener() {
+            @Override public void onSessionStarted(String sessionId, long startMs, String reason) {
+                assertEquals(sessionId, store.getString(AutoTrackSession.KEY_SESSION_ID, null));
+                assertEquals(startMs, store.getLong(AutoTrackSession.KEY_SESSION_START, -1));
+                assertEquals(0, store.openBatches);
+            }
+            @Override public void onSessionEnded(String sessionId, long startMs, long endMs, String reason) { }
+            @Override public void onUnfinishedForeground(String sessionId, long startMs, long lastActivityMs) {
+                assertFalse(store.getBoolean(AutoTrackSession.KEY_IN_FOREGROUND, true));
+            }
+        };
+        AutoTrackSession session = new AutoTrackSession(store, IDLE, checking);
+        session.restore(T0);
+        session.onForeground(T0);
+        session.reset(T0 + 5000);
+
+        // simulate kill in foreground and restart
+        new AutoTrackSession(store, IDLE, checking).restore(T0 + 10_000);
+    }
+
+    @Test
+    public void restoreWithoutForegroundFlagDoesNotReportUnfinished() {
+        AutoTrackSession first = newSession();
+        first.restore(T0);
+        first.onForeground(T0);
+        first.onBackground(T0 + 1000); // clean background before the kill
+
+        RecordingListener second = new RecordingListener();
+        new AutoTrackSession(mStore, IDLE, second).restore(T0 + 2000);
+
+        assertTrue(second.unfinished.isEmpty());
+    }
+
+    @Test
+    public void endNeverPrecedesStart() {
+        AutoTrackSession session = newSession();
+        session.restore(T0);
+        session.reset(T0 - 10_000); // clock went backwards
+
+        assertEquals(1, mListener.ended.size());
+        assertEquals(T0, mListener.ended.get(0).endMs); // clamped to the session start
+    }
+
+    @Test
+    public void resetLeavesForegroundFlagUntouched() {
+        AutoTrackSession session = newSession();
+        session.restore(T0);
+        session.onForeground(T0);
+        session.reset(T0 + 1000);
+
+        assertTrue(mStore.getBoolean(AutoTrackSession.KEY_IN_FOREGROUND, false));
+        session.onBackground(T0 + 2000);
+        assertFalse(mStore.getBoolean(AutoTrackSession.KEY_IN_FOREGROUND, true));
+    }
+
+    @Test
+    public void splitResetEndsOldSessionThenStartsNew() {
+        AutoTrackSession session = newSession();
+        session.restore(T0);
+        String oldId = session.getSessionId();
+
+        session.endForReset(T0 + 1000);
+        assertEquals(1, mListener.ended.size());
+        assertEquals(oldId, mListener.ended.get(0).sessionId);
+        assertEquals(oldId, session.getSessionId()); // still the old id until the second half
+        assertEquals(1, mListener.started.size());
+
+        session.startAfterReset(T0 + 1001);
+        assertEquals(2, mListener.started.size());
+        assertEquals(AutoTrackSession.REASON_RESET, mListener.started.get(1).reason);
+        assertNotEquals(oldId, session.getSessionId());
+    }
+
+    @Test
+    public void batchesAreBalanced() {
+        AutoTrackSession session = newSession();
+        session.restore(T0);
+        session.onForeground(T0);
+        session.touch(T0 + 1);
+        session.onBackground(T0 + 2);
+        session.onForeground(T0 + IDLE + 10); // roll over inside onForeground
+        session.reset(T0 + IDLE + 20);
+
+        assertEquals(0, mStore.openBatches);
+        assertTrue(mStore.commits > 0);
+    }
+
     // ---------------------------------------------------------------------------------------------
 
     private static final class MapStore implements AutoTrackSession.Store {
         private final Map<String, Object> map = new HashMap<>();
+        int openBatches;
+        int commits;
+
+        @Override public void begin() { openBatches++; }
+        @Override public void commit() { openBatches--; commits++; }
 
         @Override public String getString(String key, String def) { Object v = map.get(key); return v == null ? def : (String) v; }
         @Override public long getLong(String key, long def) { Object v = map.get(key); return v == null ? def : (Long) v; }

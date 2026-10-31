@@ -281,7 +281,8 @@ public class MixpanelAPI implements FeatureFlagDelegate {
 
         if (options.getAutoTrackOptions() != null) {
             mAutoTrackManager = AutoTrackManager.install(
-                    mContext, this, token, options.getInstanceName(), options.getAutoTrackOptions());
+                    mContext, this, token, options.getInstanceName(), options.getAutoTrackOptions(),
+                    mConfig.getFlushOnBackground());
         }
 
         // Enqueue async check to determine if this is the first launch
@@ -1491,6 +1492,11 @@ public class MixpanelAPI implements FeatureFlagDelegate {
      * storage. Will not clear referrer information.
      */
     public void reset() {
+        // End the automatic session first so "Session Ended" still carries the old identity.
+        if (mAutoTrackManager != null) {
+            mAutoTrackManager.onBeforeIdentityReset();
+        }
+
         // Will clear distinct_ids, superProperties,
         // and waiting People Analytics properties. Will have no effect
         // on messages already queued to send with AnalyticsMessages.
@@ -1510,7 +1516,7 @@ public class MixpanelAPI implements FeatureFlagDelegate {
 
         // reset() wiped the $session_id super property: start a new automatic session.
         if (mAutoTrackManager != null) {
-            mAutoTrackManager.onIdentityReset();
+            mAutoTrackManager.onAfterIdentityReset();
         }
     }
 
@@ -1552,6 +1558,9 @@ public class MixpanelAPI implements FeatureFlagDelegate {
 
         if (mAutocaptureManager != null) {
             mAutocaptureManager.stop();
+        }
+        if (mAutoTrackManager != null) {
+            mAutoTrackManager.onOptOut();
         }
     }
 
@@ -1606,6 +1615,9 @@ public class MixpanelAPI implements FeatureFlagDelegate {
             } else {
                 mAutocaptureManager.start();
             }
+        }
+        if (mAutoTrackManager != null) {
+            mAutoTrackManager.onOptIn();
         }
     }
 

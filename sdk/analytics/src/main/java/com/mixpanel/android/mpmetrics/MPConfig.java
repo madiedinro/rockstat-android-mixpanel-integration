@@ -82,7 +82,7 @@ import javax.net.ssl.SSLSocketFactory;
  *   <dt>com.mixpanel.android.MPConfig.SessionIdleTimeout
  *   <dd>An integer number. How long (ms) the app may stay in the background before the next
  *       foreground starts a new $mp_session_id. Defaults to 30 minutes; 0 starts a new session on
- *       every foreground (the behaviour before 8.12.1).
+ *       every foreground (the upstream Mixpanel behaviour).
  *   <dt>com.mixpanel.android.MPConfig.UseIpAddressForGeolocation
  *   <dd>A boolean value. If true, Mixpanel will automatically determine city, region and country
  *       data using the IP address of the client.Defaults to true.
@@ -234,7 +234,7 @@ public class MPConfig {
         mSessionIdleTimeout =
                 metaData.getInt(
                         "com.mixpanel.android.MPConfig.SessionIdleTimeout",
-                        30 * 60 * 1000); // 30 minutes // no timeout by default
+                        30 * 60 * 1000); // 30 minutes
         mUseIpAddressForGeolocation =
                 metaData.getBoolean("com.mixpanel.android.MPConfig.UseIpAddressForGeolocation", true);
         mRemoveLegacyResidualFiles =

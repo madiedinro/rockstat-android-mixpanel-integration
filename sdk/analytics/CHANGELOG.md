@@ -19,6 +19,24 @@
   `installreferrer` library on the app classpath). `MixpanelAPI.getAutoTrackSessionId()` exposes the
   current session id.
 
+### Review fixes (same release)
+- `$screen` is deduplicated per Activity class; `$screen_name` uses the Activity's own label only
+  when it declares one (unlabeled Activities no longer all report the application label).
+- `Network Status Changed` is skipped when the app lacks `ACCESS_NETWORK_STATE`; broadcast
+  receivers are wrapped in try/catch; a lost non-default network during a Wi-Fi/cellular handover
+  no longer reports "offline".
+- `security_patch` is only read on API 23+.
+- An app that adopts the SDK on an already installed device reports `Application Updated`, not
+  `Application Installed`, and `Install Attributed` is skipped for it.
+- `optOutTracking()` stops the system observers and the ANR watchdog; `optInTracking()` restarts
+  them and re-registers the session super properties.
+- `reset()` tracks `Session Ended` before the identity is wiped.
+- ANR detection uses the uptime clock and a confirming second check (no false positives after a
+  process freeze).
+- `AutoTracker` respects `FlushOnBackground`; `$mp_session_id` activity is persisted during long
+  foreground stints; session prefs are written in one batch.
+- `-dontwarn com.android.installreferrer.**` added to the consumer ProGuard rules.
+
 
 ## [v8.12.0](https://github.com/mixpanel/mixpanel-android/tree/v8.12.0) (2026-10-30)
 

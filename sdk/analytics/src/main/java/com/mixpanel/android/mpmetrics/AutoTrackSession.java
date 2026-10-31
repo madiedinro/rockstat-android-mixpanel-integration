@@ -26,6 +26,9 @@ import java.util.UUID;
         void put(String key, String value);
         void put(String key, long value);
         void put(String key, boolean value);
+        /** Optional: group the following puts into one write. */
+        default void begin() { }
+        default void commit() { }
     }
 
     interface Listener {
@@ -85,32 +88,56 @@ import java.util.UUID;
     void onForeground(long nowMs) {
         synchronized (mLock) {
             rollOverIfIdle(nowMs);
+            mStore.begin();
             mLastActivityMs = nowMs;
             persist();
             mStore.put(KEY_IN_FOREGROUND, true);
+            mStore.commit();
         }
     }
 
     void onBackground(long nowMs) {
         synchronized (mLock) {
+            mStore.begin();
             mLastActivityMs = nowMs;
             persist();
             mStore.put(KEY_IN_FOREGROUND, false);
+            mStore.commit();
         }
     }
 
     /** Any user activity: keeps the session alive and the persisted timestamp fresh. */
     void touch(long nowMs) {
         synchronized (mLock) {
+            mStore.begin();
             mLastActivityMs = nowMs;
             persist();
+            mStore.commit();
         }
     }
 
-    /** A logout / {@code reset()} is a hard session boundary. */
+    /**
+     * A logout / {@code reset()} is a hard session boundary. {@link #endForReset(long)} and
+     * {@link #startAfterReset(long)} split it so the caller can end the old session under the old
+     * identity and start the new one under the new identity.
+     */
     void reset(long nowMs) {
         synchronized (mLock) {
             end(nowMs, REASON_RESET);
+            start(nowMs, REASON_RESET);
+        }
+    }
+
+    /** First half of {@link #reset(long)}: ends the current session, keeps its id until {@link #startAfterReset(long)}. */
+    void endForReset(long nowMs) {
+        synchronized (mLock) {
+            end(nowMs, REASON_RESET);
+        }
+    }
+
+    /** Second half of {@link #reset(long)}: starts a fresh session. */
+    void startAfterReset(long nowMs) {
+        synchronized (mLock) {
             start(nowMs, REASON_RESET);
         }
     }
@@ -162,10 +189,12 @@ import java.util.UUID;
         mListener.onSessionEnded(mSessionId, mStartMs, Math.max(atMs, mStartMs), reason);
     }
 
-    // caller holds mLock
+    // caller holds mLock; writes are batched when the caller opened a batch, else applied one by one
     private void persist() {
+        mStore.begin();
         mStore.put(KEY_SESSION_ID, mSessionId);
         mStore.put(KEY_SESSION_START, mStartMs);
         mStore.put(KEY_LAST_ACTIVITY, mLastActivityMs);
+        mStore.commit();
     }
 }

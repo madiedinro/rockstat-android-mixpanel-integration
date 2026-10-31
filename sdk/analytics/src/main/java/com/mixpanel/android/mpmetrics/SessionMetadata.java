@@ -34,7 +34,11 @@ import static com.mixpanel.android.mpmetrics.ConfigurationChecker.LOGTAG;
     private final long mIdleTimeoutMs;
 
     private long mEventsCounter, mPeopleCounter, mSessionStartEpoch, mLastActivityMs;
+    private long mLastPersistMs;
     private String mSessionID;
+
+    /** Events refresh the persisted last-activity time at most this often. */
+    private static final long EVENT_PERSIST_INTERVAL_MS = 60 * 1000L;
 
     /** In-memory session that restarts on every foreground (legacy behaviour). */
     /* package */ SessionMetadata() {
@@ -113,6 +117,11 @@ import static com.mixpanel.android.mpmetrics.ConfigurationChecker.LOGTAG;
                     mPeopleCounter++;
                 }
                 mLastActivityMs = System.currentTimeMillis();
+                // A long foreground stint without a background would otherwise leave the
+                // persisted timestamp stale and roll the session over after a kill.
+                if (mLastActivityMs - mLastPersistMs > EVENT_PERSIST_INTERVAL_MS) {
+                    persist();
+                }
             } catch (JSONException e) {
                 MPLog.e(LOGTAG, "Cannot create session metadata JSON object", e);
             }
@@ -154,6 +163,7 @@ import static com.mixpanel.android.mpmetrics.ConfigurationChecker.LOGTAG;
             return;
         }
         try {
+            mLastPersistMs = System.currentTimeMillis();
             mStore.edit()
                     .putString(KEY_SESSION_ID, mSessionID)
                     .putLong(KEY_SESSION_START_SEC, mSessionStartEpoch)

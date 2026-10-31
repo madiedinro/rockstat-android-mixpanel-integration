@@ -13,7 +13,8 @@ Opt-in via `MixpanelOptions.Builder.autoTrackOptions(...)`. Everything is packag
 | `InstallReferrerTracker` | `Install Attributed` once per install; Play library is `compileOnly`, referenced only inside a nested class after a `Class.forName` check. |
 
 Persistence: `SharedPreferences` file `com.mixpanel.android.mpmetrics.MixpanelAPI.AutoTrack_<instanceKey>`
-(session, version, install-referrer flag) and `...AutoTrack.System` (OS version).
+(session, version, install-referrer flag, OS version). Session writes are batched into one `apply()`
+per state change.
 
 Related core change: `MixpanelActivityLifecycleCallbacks` persists the current `$ae_session` stint
 in `...MixpanelAPI.Session_<instanceKey>` and back-fills it after process death; `SessionMetadata`

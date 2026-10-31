@@ -55,20 +55,25 @@ import org.json.JSONObject;
     private final AutoTrackSession mSession; // null when session events are disabled
     private final String mVersionName;
     private final long mVersionCode;
+    private final boolean mFreshInstall;
+    private final boolean mFlushOnBackground;
 
     private boolean mHasBeenForegrounded;
-    private String mCurrentScreen;
+    private String mCurrentScreenClass; // fully qualified Activity class name
     private long mScreenEnteredMs;
 
-    AutoTracker(Application app, MixpanelAPI mixpanel, AutoTrackOptions options, SharedPreferences prefs) {
+    AutoTracker(Application app, MixpanelAPI mixpanel, AutoTrackOptions options, SharedPreferences prefs,
+                boolean flushOnBackground) {
         mApp = app;
         mMixpanel = mixpanel;
         mOptions = options;
         mPrefs = prefs;
+        mFlushOnBackground = flushOnBackground;
 
         final PackageInfo info = packageInfo(app);
         mVersionName = info != null && info.versionName != null ? info.versionName : "unknown";
         mVersionCode = info != null ? versionCode(info) : -1L;
+        mFreshInstall = isFreshInstall(info);
 
         if (options.isSessionEventsEnabled()) {
             mSession = new AutoTrackSession(new PrefsStore(prefs), options.getSessionIdleTimeoutMs(), this);
@@ -86,10 +91,38 @@ import org.json.JSONObject;
         return mSession == null ? null : mSession.getSessionId();
     }
 
-    /** {@link MixpanelAPI#reset()} wipes super properties: re-register them under a new session. */
-    void onIdentityReset() {
+    boolean isFreshInstall() {
+        return mFreshInstall;
+    }
+
+    /**
+     * {@link MixpanelAPI#optOutTracking()} wipes super properties and {@code registerSuperProperties}
+     * is a no-op while opted out, so {@code $session_id} must be put back when the user opts in.
+     */
+    void onOptIn() {
+        if (mSession == null) {
+            return;
+        }
+        final JSONObject superProps = new JSONObject();
+        put(superProps, PROP_SESSION_ID, mSession.getSessionId());
+        put(superProps, PROP_SESSION_START, mSession.getStartMs());
+        mMixpanel.registerSuperProperties(superProps);
+    }
+
+    /**
+     * First half of {@link MixpanelAPI#reset()}, called before the identity is wiped so
+     * {@code Session Ended} still carries the old distinct_id and super properties.
+     */
+    void onBeforeIdentityReset() {
         if (mSession != null) {
-            mSession.reset(now());
+            mSession.endForReset(now());
+        }
+    }
+
+    /** Second half of {@link MixpanelAPI#reset()}: super properties are gone, start a new session under the new identity. */
+    void onAfterIdentityReset() {
+        if (mSession != null) {
+            mSession.startAfterReset(now());
         }
     }
 
@@ -171,7 +204,9 @@ import org.json.JSONObject;
                 mSession.onBackground(now);
             }
             // Do not wait for the 500 ms delayed background flush: the process may not live that long.
-            mMixpanel.flush();
+            if (mFlushOnBackground) {
+                mMixpanel.flush();
+            }
         } catch (Exception e) {
             MPLog.e(LOGTAG, "onStop failed", e);
         }
@@ -211,13 +246,11 @@ import org.json.JSONObject;
             final long now = now();
             mScreenEnteredMs = now;
             if (mOptions.isScreenEventsEnabled()) {
-                final String screenName = screenName(activity);
-                if (!screenName.equals(mCurrentScreen)) {
-                    mCurrentScreen = screenName;
-                    final JSONObject props = new JSONObject();
-                    put(props, "$screen_name", screenName);
-                    put(props, "$screen_class", activity.getClass().getSimpleName());
-                    track(EVENT_SCREEN, props);
+                // Dedupe on the component, not the label: unlabeled Activities all share the app label.
+                final String screenClass = activity.getClass().getName();
+                if (!screenClass.equals(mCurrentScreenClass)) {
+                    mCurrentScreenClass = screenClass;
+                    track(EVENT_SCREEN, screenProperties(activity));
                 }
             }
             if (mSession != null) {
@@ -233,9 +266,7 @@ import org.json.JSONObject;
         try {
             final long now = now();
             if (mOptions.isScreenEventsEnabled()) {
-                final JSONObject props = new JSONObject();
-                put(props, "$screen_name", screenName(activity));
-                put(props, "$screen_class", activity.getClass().getSimpleName());
+                final JSONObject props = screenProperties(activity);
                 put(props, "duration_s", seconds(now - mScreenEnteredMs));
                 track(EVENT_SCREEN_LEFT, props);
             }
@@ -268,7 +299,13 @@ import org.json.JSONObject;
             final long previousCode = mPrefs.getLong(KEY_VERSION_CODE, -1L);
 
             if (previousName == null) {
-                track(EVENT_APP_INSTALLED, appProperties());
+                // No record yet: either a fresh install, or an existing install whose app just
+                // adopted this SDK. PackageManager tells them apart; only the former is an install.
+                if (mFreshInstall) {
+                    track(EVENT_APP_INSTALLED, appProperties());
+                } else {
+                    track(EVENT_APP_UPDATED, appProperties());
+                }
             } else if (previousCode != mVersionCode) {
                 final JSONObject props = appProperties();
                 put(props, "previous_version", previousName);
@@ -302,13 +339,27 @@ import org.json.JSONObject;
         return props;
     }
 
+    private JSONObject screenProperties(Activity activity) {
+        final JSONObject props = new JSONObject();
+        put(props, "$screen_name", screenName(activity));
+        put(props, "$screen_class", activity.getClass().getSimpleName());
+        return props;
+    }
+
+    /**
+     * The Activity's own {@code android:label} when it declares one, otherwise its simple class
+     * name. {@code loadLabel()} is not used blindly: for an unlabeled Activity it falls back to the
+     * application label, which would name every screen after the app.
+     */
     private String screenName(Activity activity) {
         try {
             final PackageManager pm = mApp.getPackageManager();
             final ActivityInfo info = pm.getActivityInfo(activity.getComponentName(), 0);
-            final CharSequence label = info.loadLabel(pm);
-            if (label != null && label.length() > 0) {
-                return label.toString();
+            if (info.labelRes != 0 || info.nonLocalizedLabel != null) {
+                final CharSequence label = info.loadLabel(pm);
+                if (label != null && label.length() > 0) {
+                    return label.toString();
+                }
             }
         } catch (Exception ignored) {
             // fall through to the class name
@@ -322,6 +373,18 @@ import org.json.JSONObject;
         } catch (Exception e) {
             return null;
         }
+    }
+
+    /**
+     * True until the package is updated for the first time: Android keeps {@code lastUpdateTime}
+     * equal to {@code firstInstallTime} for a never-updated install. Unknown package info counts as
+     * fresh so a broken PackageManager does not hide every install.
+     */
+    static boolean isFreshInstall(@Nullable PackageInfo info) {
+        if (info == null) {
+            return true;
+        }
+        return info.lastUpdateTime <= info.firstInstallTime;
     }
 
     @SuppressWarnings("deprecation")
@@ -346,9 +409,14 @@ import org.json.JSONObject;
         return System.currentTimeMillis();
     }
 
-    /** {@link AutoTrackSession.Store} over SharedPreferences. */
+    /**
+     * {@link AutoTrackSession.Store} over SharedPreferences. Writes between {@code begin()} and
+     * {@code commit()} share a single {@code apply()}; a write outside a batch is applied at once.
+     */
     private static final class PrefsStore implements AutoTrackSession.Store {
         private final SharedPreferences mPrefs;
+        private SharedPreferences.Editor mBatch; // non-null between the outermost begin() and commit()
+        private int mDepth; // begin()/commit() nest: persist() runs inside onForeground() etc.
 
         PrefsStore(SharedPreferences prefs) {
             mPrefs = prefs;
@@ -357,8 +425,28 @@ import org.json.JSONObject;
         @Override public String getString(String key, String defaultValue) { return mPrefs.getString(key, defaultValue); }
         @Override public long getLong(String key, long defaultValue) { return mPrefs.getLong(key, defaultValue); }
         @Override public boolean getBoolean(String key, boolean defaultValue) { return mPrefs.getBoolean(key, defaultValue); }
-        @Override public void put(String key, String value) { mPrefs.edit().putString(key, value).apply(); }
-        @Override public void put(String key, long value) { mPrefs.edit().putLong(key, value).apply(); }
-        @Override public void put(String key, boolean value) { mPrefs.edit().putBoolean(key, value).apply(); }
+
+        @Override public void put(String key, String value) {
+            if (mBatch != null) mBatch.putString(key, value); else mPrefs.edit().putString(key, value).apply();
+        }
+        @Override public void put(String key, long value) {
+            if (mBatch != null) mBatch.putLong(key, value); else mPrefs.edit().putLong(key, value).apply();
+        }
+        @Override public void put(String key, boolean value) {
+            if (mBatch != null) mBatch.putBoolean(key, value); else mPrefs.edit().putBoolean(key, value).apply();
+        }
+
+        @Override public void begin() {
+            if (mDepth++ == 0) {
+                mBatch = mPrefs.edit();
+            }
+        }
+
+        @Override public void commit() {
+            if (mDepth > 0 && --mDepth == 0 && mBatch != null) {
+                mBatch.apply();
+                mBatch = null;
+            }
+        }
     }
 }

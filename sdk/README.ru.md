@@ -59,18 +59,21 @@ MixpanelAPI mp = MixpanelAPI.getInstance(context, TOKEN, trackAutomaticEvents, o
 
 | Группа (переключатель билдера) | События | Ключевые свойства |
 | --- | --- | --- |
-| `lifecycleEvents` | `Application Installed`, `Application Updated`, `Application Opened`, `Application Backgrounded` | `version`, `build`, `from_background`, `session_length_s`, `previous_version`, `previous_build`; убийство процесса на переднем плане досылается с `reason=process_killed` и прошедшим `time` |
+| `lifecycleEvents` | `Application Installed`, `Application Updated`, `Application Opened`, `Application Backgrounded` | `version`, `build`, `from_background`, `session_length_s`, `previous_version`, `previous_build`; убийство процесса на переднем плане досылается с `reason=process_killed` и прошедшим `time`. Приложение, уже установленное до внедрения SDK, при первом запуске получает `Application Updated` (без `previous_*`), а не `Application Installed` |
 | `sessionEvents` | `Session Started`, `Session Ended` | `reason` (`first_launch`, `timeout`, `reset`), `session_length_s`; `Session Ended` датируется последней активностью, если таймаут замечен позже. Супер-свойства `$session_id`, `$session_start` у каждого события |
-| `screenEvents` | `$screen`, `Screen Left` | `$screen_name` (label Activity), `$screen_class`, `duration_s` |
+| `screenEvents` | `$screen`, `Screen Left` | `$screen_name` (собственный `android:label` Activity, иначе имя класса), `$screen_class`, `duration_s`; дедупликация по классу Activity |
 | `deepLinkEvents` | `Deep Link Opened` | `url`, `referrer` |
-| `systemEvents` | `OS Updated`, `Memory Warning`, `Configuration Changed`, `Network Status Changed`, `Time Zone Changed`, `Battery Low`, `Battery Okay` | `previous_os_version`/`os_version`/`security_patch`; `level_name`/`available_mb`/`heap_used_mb`; `changed[]`/`orientation`/`dark_mode`/`locale`/`font_scale`; `online`/`transport`/`previous_transport`/`metered`/`validated`; `previous_timezone`/`timezone`; `battery_percent`/`charging` |
-| `anrTimeoutMs` (0 = выкл.) | `ANR Detected` | `blocked_ms`, `main_thread_stack` (верхние 12 кадров); не срабатывает при подключённом отладчике |
-| `installReferrerEvent` | `Install Attributed` | `referrer`, `referrer_click_ts`, `install_begin_ts`, `google_play_instant`, `install_version`; нужна библиотека `com.android.installreferrer:installreferrer` в приложении (SDK зависит от неё только как `compileOnly` и проверяет наличие класса в рантайме) |
+| `systemEvents` | `OS Updated`, `Memory Warning`, `Configuration Changed`, `Network Status Changed`, `Time Zone Changed`, `Battery Low`, `Battery Okay` | `previous_os_version`/`os_version`/`security_patch`; `level_name`/`available_mb`/`heap_used_mb`; `changed[]`/`orientation`/`dark_mode`/`locale`/`font_scale`; `online`/`transport`/`previous_transport`/`metered`/`validated`; `previous_timezone`/`timezone`; `battery_percent`/`charging`. Для `Network Status Changed` в манифесте приложения нужно разрешение `ACCESS_NETWORK_STATE`, иначе событие пропускается |
+| `anrTimeoutMs` (0 = выкл.) | `ANR Detected` | `blocked_ms` (по часам uptime), `main_thread_stack` (верхние 12 кадров); подтверждается повторной проверкой, не срабатывает при подключённом отладчике |
+| `installReferrerEvent` | `Install Attributed` | `referrer`, `referrer_click_ts`, `install_begin_ts`, `google_play_instant`, `install_version`; нужна библиотека `com.android.installreferrer:installreferrer` в приложении (SDK зависит от неё только как `compileOnly` и проверяет наличие класса в рантайме); отправляется только при свежей установке, а не для уже установленного приложения, в которое добавили SDK |
 
 Это обычные вызовы `track()`: флаг `trackAutomaticEvents` на них не влияет, они несут все
 супер-свойства и уходят на тот `EventsEndpoint`, который настроен. `MixpanelAPI.reset()`
-завершает текущую автоматическую сессию и начинает новую. `MixpanelAPI.getAutoTrackSessionId()`
-возвращает текущий `$session_id` (или `null`, если события сессий выключены).
+завершает текущую автоматическую сессию под старой идентичностью и начинает новую под новой.
+`optOutTracking()` останавливает системные наблюдатели и ANR-watchdog; `optInTracking()`
+запускает их снова и заново регистрирует `$session_id` / `$session_start`.
+`MixpanelAPI.getAutoTrackSessionId()` возвращает текущий `$session_id` (или `null`, если события
+сессий выключены).
 
 Всё, кроме `AutoTrackOptions` и `getAutoTrackSessionId()`, package-private. Внутреннее устройство и
 файлы хранения описаны в [context/AUTOTRACK.md](context/AUTOTRACK.md); конечный автомат сессии
@@ -99,7 +102,7 @@ MixpanelAPI mp = MixpanelAPI.getInstance(context, TOKEN, trackAutomaticEvents, o
 ```sh
 git remote add upstream https://github.com/mixpanel/mixpanel-android.git
 git fetch upstream
-git rebase upstream/master   # изменения форка — один коммит поверх оригинала
+git rebase upstream/master   # изменения форка — коммиты поверх оригинала
 ```
 
 Файлы, затронутые форком: `MixpanelAPI.java`, `MixpanelOptions.java`, `MPConfig.java`,

@@ -2,6 +2,10 @@
   <img src="https://user-images.githubusercontent.com/71290498/231855731-2d3774c3-dc41-4595-abfb-9c49f5f84103.png" alt="Mixpanel Android Library" height="150"/>
 </p>
 
+> **Rockstat fork.** This module is a modified Mixpanel Android SDK for the Rockstat backend; the
+> fork's changes are described in [../README.md](../README.md). The text below is upstream's and
+> refers to the Mixpanel service.
+
 # Latest Version
 
 ##### _October 30, 2026_ - [v8.12.0](https://github.com/mixpanel/mixpanel-android/releases/tag/v8.12.0)

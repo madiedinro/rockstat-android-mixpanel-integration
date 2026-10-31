@@ -35,7 +35,7 @@
 
 | Группа | События | Ключевые свойства |
 | --- | --- | --- |
-| lifecycle | `Application Installed`, `Application Updated`, `Application Opened`, `Application Backgrounded` | `version`, `build`, `from_background`, `session_length_s`, `previous_version`; убийство процесса на переднем плане досылается с `reason=process_killed` |
+| lifecycle | `Application Installed`, `Application Updated`, `Application Opened`, `Application Backgrounded` | `version`, `build`, `from_background`, `session_length_s`, `previous_version`, `previous_build`; убийство процесса на переднем плане досылается с `reason=process_killed` |
 | sessions | `Session Started`, `Session Ended` (датируется задним числом при таймауте или смерти процесса) | `reason`, `session_length_s`; супер-свойства `$session_id`, `$session_start` у каждого события |
 | screens | `$screen`, `Screen Left` | `$screen_name`, `$screen_class`, `duration_s` |
 | deep links | `Deep Link Opened` | `url`, `referrer` |
@@ -97,8 +97,8 @@ git subtree pull --prefix=sdk https://github.com/mixpanel/mixpanel-android.git m
 
 Репозиторий начинался как `sample-android-mixpanel-integration` от Mixpanel для SDK 5.x
 (push-уведомления, in-app сообщения, endpoint `decide`). Эти возможности исчезли из SDK в 6.0 / 7.0,
-поэтому Firebase, `google-services.json`, `TakeoverInAppActivity` и `MixpanelFCMMessagingService`
-удалены. Затем пример был переведён на SDK 8.12.0, превращён в отладочный стенд и, наконец,
+поэтому Firebase, `TakeoverInAppActivity` и `MixpanelFCMMessagingService` удалены
+(`google-services.json` больше не используется и игнорируется git). Затем пример был переведён на SDK 8.12.0, превращён в отладочный стенд и, наконец,
 объединён с форком SDK под Rockstat в `sdk/`.
 
 ## Лицензия
