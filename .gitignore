@@ -34,3 +34,4 @@ app/config.txt
 
 # Firebase config is no longer used by the sample; keep local copies out of git
 google-services.json
+

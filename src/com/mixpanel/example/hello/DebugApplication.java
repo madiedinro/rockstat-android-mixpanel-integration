@@ -3,17 +3,18 @@ package com.mixpanel.example.hello;
 import android.app.Application;
 import android.content.Context;
 
+import com.mixpanel.android.mpmetrics.AutoTrackOptions;
 import com.mixpanel.android.mpmetrics.AutocaptureOptions;
 import com.mixpanel.android.mpmetrics.FeatureFlagOptions;
 import com.mixpanel.android.mpmetrics.MixpanelAPI;
 import com.mixpanel.android.mpmetrics.MixpanelOptions;
 
 /**
- * Initialises the Mixpanel SDK once per process and installs {@link AutoTracker}.
+ * Initialises the Mixpanel SDK (rockstat fork, built from ./sdk) once per process.
  *
- * Doing this in the Application (not in an Activity) matters for automatic events: the tracker
- * has to be registered before the first Activity resumes, otherwise the first screen and the
- * first "Application Opened" are missed.
+ * Automatic events and durable sessions live inside the SDK now and are switched on with
+ * {@link AutoTrackOptions}; doing this in the Application rather than an Activity makes sure the
+ * first screen and the first "Application Opened" are not missed.
  */
 public class DebugApplication extends Application {
 
@@ -24,28 +25,29 @@ public class DebugApplication extends Application {
 
     /**
      * When true the SDK sends $ae_first_open, $ae_updated, $ae_session and $ae_crashed on its own.
-     * {@link AutoTracker} sends its PostHog-style equivalents regardless of this flag.
+     * The {@link AutoTrackOptions} events are sent regardless of this flag.
      */
     static final boolean TRACK_AUTOMATIC_EVENTS = true;
 
     /**
-     * Autocapture (GA since SDK 8.12.0) tracks $mp_click, rage clicks and dead clicks for every
-     * view. Off by default here because it floods the queue while you debug hand-made events.
+     * SDK autocapture: $mp_click plus rage and dead clicks for every view.
+     * Set to false if the click stream drowns out the events you are debugging.
      */
-    static final boolean ENABLE_AUTOCAPTURE = false;
-
-    /** Inactivity gap after which {@link AutoTracker} starts a new session (PostHog uses 30 min). */
-    static final long SESSION_TIMEOUT_MS = 30L * 60L * 1000L;
+    static final boolean ENABLE_AUTOCAPTURE = true;
 
     private MixpanelAPI mMixpanel;
-    private AutoTracker mAutoTracker;
 
     @Override
     public void onCreate() {
         super.onCreate();
 
         final MixpanelOptions.Builder options = new MixpanelOptions.Builder()
-                .featureFlagOptions(new FeatureFlagOptions.Builder().enabled(true).build());
+                .featureFlagOptions(new FeatureFlagOptions.Builder().enabled(true).build())
+                // All groups on: lifecycle, screens, sessions, deep links, system, ANR, install referrer.
+                .autoTrackOptions(new AutoTrackOptions.Builder()
+                        .sessionIdleTimeoutMs(AutoTrackOptions.DEFAULT_SESSION_IDLE_TIMEOUT_MS)
+                        .anrTimeoutMs(AutoTrackOptions.DEFAULT_ANR_TIMEOUT_MS)
+                        .build());
         if (ENABLE_AUTOCAPTURE) {
             options.autocaptureOptions(new AutocaptureOptions.Builder().build());
         }
@@ -54,8 +56,6 @@ public class DebugApplication extends Application {
                 options.build());
         // Same as the EnableDebugLogging meta-data, but explicit so it also works in release builds.
         mMixpanel.setEnableLogging(true);
-
-        mAutoTracker = AutoTracker.install(this, mMixpanel, SESSION_TIMEOUT_MS);
     }
 
     public static DebugApplication from(Context context) {
@@ -64,9 +64,5 @@ public class DebugApplication extends Application {
 
     public MixpanelAPI mixpanel() {
         return mMixpanel;
-    }
-
-    AutoTracker autoTracker() {
-        return mAutoTracker;
     }
 }

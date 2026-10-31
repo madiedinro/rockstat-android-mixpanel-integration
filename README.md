@@ -19,95 +19,66 @@ Event properties are entered as a JSON object; a `counter` property is appended 
 The SDK is initialised in `DebugApplication.java`, where the automatic-event and autocapture flags
 and the session timeout live.
 
-## Automatic events and sessions (`AutoTracker.java`)
+## SDK fork in `./sdk`
 
-`AutoTracker` is installed from `DebugApplication` and mirrors PostHog's Android autocapture on top
-of the Mixpanel SDK:
-
-| Event                      | When                                   | Properties                                   |
-|----------------------------|----------------------------------------|----------------------------------------------|
-| `Application Installed`    | first launch ever                      | `version`, `build`                           |
-| `Application Updated`      | first launch of a new `versionCode`    | `previous_version`, `previous_build`, ...    |
-| `Application Opened`       | app enters foreground (process level)  | `from_background`, `version`, `build`        |
-| `Application Backgrounded` | app leaves foreground (process level)  | `session_length_s`, `version`, `build`       |
-| `$screen`                  | every Activity resume (deduplicated)   | `$screen_name`, `$screen_class`              |
-| `Deep Link Opened`         | Activity created with an intent URI    | `url`, `referrer`                            |
-
-Every event also carries the super properties `$session_id` and `$session_start`.
-
-### Why the SDK's own session breaks when the app is closed
-
-The SDK's `$ae_session` is produced by `MixpanelActivityLifecycleCallbacks`: when the last Activity
-pauses it posts a Runnable with a 500 ms delay, and only that Runnable tracks `$ae_session` and
-triggers the background flush. `$mp_session_id` (the `$mp_metadata` session) is regenerated on
-every foreground, with no inactivity timeout. Consequences:
-
-* Swipe the app away from Recents, or let the OS kill it, and the Runnable never runs:
-  the session has no end event at all.
-* Even when `$ae_session` is tracked, the flush is asynchronous; a kill right after leaves it in
-  SQLite until the next launch.
-* Any trip to another app, however short, starts a new `$mp_session_id` and resets the session
-  timer, so one user session shows up as several.
-* Sessions shorter than `MinimumSessionDuration` (3 s in this manifest, 10 s by default) are
-  dropped silently.
-
-`AutoTracker` works around all four without touching the SDK:
-
-* The session is a UUID in `SharedPreferences`, persisted on every resume/pause/foreground/
-  background, and continued across backgrounds and process restarts while the gap is under
-  `SESSION_TIMEOUT_MS` (30 min, like PostHog).
-* Foreground/background come from `ProcessLifecycleOwner`, not from individual Activities.
-* `flush()` is called immediately in `onStop`, before the SDK's 500 ms delay.
-* If the process died while foregrounded, the next launch back-fills `Application Backgrounded`
-  with the last persisted timestamp (the SDK lets caller properties override `time`), so the
-  previous session still ends on the server side.
-
-`MixpanelAPI.reset()` wipes super properties, so `MainActivity` calls
-`AutoTracker.onIdentityReset()` afterwards to start a fresh session.
-
-If you prefer Mixpanel's native screen events, `mixpanel.getAutocapture().trackScreenView(name)`
-sends `$mp_page_view` instead of `$screen`.
-
-## Configuration
-
-* **Project token**: `MainActivity.MIXPANEL_API_TOKEN`.
-* **Everything else** is `<meta-data>` in `AndroidManifest.xml`: debug logging, a 5 s flush
-  interval, a bulk-upload limit of 5 records, `$app_open` enabled, and custom
-  `EventsEndpoint` / `PeopleEndpoint` / `GroupsEndpoint` pointing at a proxy. Uncomment
-  `FlagsEndpoint` to proxy feature flags too. Supported keys are listed in the SDK's
-  [`MPConfig.java`](https://github.com/mixpanel/mixpanel-android/blob/master/analytics/src/main/java/com/mixpanel/android/mpmetrics/MPConfig.java).
-
-  Keep `UseIpAddressForGeolocation` unset when you use custom endpoints: when the key is present
-  the SDK appends `?ip=0|1` to the URLs, when it is absent the URLs are used verbatim.
-
-## Building
-
-Requirements: JDK 17, Android SDK platform 35 and build-tools 35.0.0 (Android Studio installs
-these for you).
+The app depends on `com.mixpanel.android:mixpanel-android:8.13.0-rockstat.1`, a fork of the
+upstream SDK (8.12.0) that lives in `./sdk` (a `git subtree` of
+[mixpanel/mixpanel-android](https://github.com/mixpanel/mixpanel-android) with the fork commits on
+top; see `sdk/README.md`) and is published to the local Maven repository. Build order:
 
 ```sh
-export JAVA_HOME=$(/usr/libexec/java_home -v 17)   # or your JDK 17 path
-./gradlew assembleDebug
-adb install -r build/outputs/apk/debug/sample-android-mixpanel-integration-debug.apk
+export JAVA_HOME=$(/usr/libexec/java_home -v 17)
+(cd sdk && ./gradlew :analytics:publishToMavenLocal)   # builds the fork into ~/.m2
+./gradlew assembleDebug                                 # builds the app against it
 ```
 
-Or open the directory in Android Studio and run the `sample-android-mixpanel-integration`
-configuration.
-
-`local.properties` must point `sdk.dir` at your Android SDK.
-
-## Watching traffic
-
-The in-app log panel shows lines with the `MixpanelAPI.*` tags. The same output is available with:
+To pull upstream SDK changes into the subtree:
 
 ```sh
-adb logcat -v time | grep MixpanelAPI
+git subtree pull --prefix=sdk https://github.com/mixpanel/mixpanel-android.git master --squash
 ```
+
+What the fork changes, in `sdk/README.md`, `sdk/analytics/CHANGELOG.md` and `sdk/context/AUTOTRACK.md`:
+
+* **`$ae_session` survives process death.** Upstream emits it from a 500 ms delayed Runnable after
+  the last Activity pauses; a process killed before that (swipe from Recents, OOM, crash) never
+  sends it. The fork persists the current foreground stint and back-fills an unfinished one on the
+  next launch with its last known timestamp.
+* **`$mp_session_id` keeps across short backgrounds.** Upstream regenerates it on every
+  foreground. The fork keeps it (and persists it) while the gap is under
+  `com.mixpanel.android.MPConfig.SessionIdleTimeout` (30 min default, 0 = old behaviour).
+* **Opt-in automatic events** via `MixpanelOptions.Builder.autoTrackOptions(AutoTrackOptions)`,
+  switched on in `DebugApplication.java` with every group enabled.
+
+## Automatic events (`AutoTrackOptions`)
+
+| Group | Events | Properties |
+|-------|--------|------------|
+| lifecycle | `Application Installed`, `Application Updated`, `Application Opened`, `Application Backgrounded` | `version`, `build`, `from_background`, `session_length_s`, `previous_version` |
+| sessions | `Session Started`, `Session Ended` (back-dated on timeout / process death) | `reason`, `session_length_s`; super properties `$session_id`, `$session_start` |
+| screens | `$screen`, `Screen Left` | `$screen_name`, `$screen_class`, `duration_s` |
+| deep links | `Deep Link Opened` | `url`, `referrer` |
+| system | `OS Updated`, `Memory Warning`, `Configuration Changed`, `Network Status Changed`, `Time Zone Changed`, `Battery Low` / `Battery Okay` | see `SystemEventTracker.java` in the fork |
+| ANR | `ANR Detected` (main thread blocked > `anrTimeoutMs`, 5 s default) | `blocked_ms`, `main_thread_stack` |
+| install referrer | `Install Attributed` (needs `com.android.installreferrer:installreferrer`, which this app ships) | `referrer`, `referrer_click_ts`, `install_begin_ts` |
+
+Also from the SDK itself: `$ae_first_open`, `$ae_updated`, `$ae_session`, `$ae_crashed`
+(`TRACK_AUTOMATIC_EVENTS`) and `$mp_click` / rage / dead clicks (`ENABLE_AUTOCAPTURE`).
+`MixpanelAPI.getAutoTrackSessionId()` returns the current `$session_id`, shown in the status panel.
+
+### Not collected, and why
+
+* **App uninstall / app data cleared** - only detectable server side.
+* **Push notification received / opened** - needs FCM, which this sample no longer bundles.
+* **Fragment screens** - the app has no fragments; register
+  `FragmentManager.FragmentLifecycleCallbacks` in `onActivityCreated` if yours does.
+* **Network requests** - needs an OkHttp interceptor; the sample makes no HTTP calls of its own.
+* **In-app purchase** - needs Play Billing.
 
 ## History
 
 Earlier versions of this sample targeted SDK 5.x and demonstrated Mixpanel push notifications,
 in-app messages and the `decide` endpoint. Those features were removed from the SDK in 6.0 / 7.0,
 so the Firebase dependency, `google-services.json`, `TakeoverInAppActivity` and
-`MixpanelFCMMessagingService` are gone from this project, and the old unsupported
-`SessionManager.java` example was replaced by `AutoTracker.java`.
+`MixpanelFCMMessagingService` are gone from this project. The old unsupported `SessionManager.java`
+example was first replaced by an in-app `AutoTracker`, which then moved into the SDK fork.

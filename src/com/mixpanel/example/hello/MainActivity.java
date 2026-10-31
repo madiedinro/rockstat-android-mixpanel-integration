@@ -19,20 +19,17 @@ import com.mixpanel.android.mpmetrics.MixpanelFlagVariant;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import java.text.SimpleDateFormat;
-import java.util.Date;
-import java.util.Locale;
 import java.util.Map;
 
 /**
  * A small playground for debugging the Mixpanel Android SDK.
  *
  * Every button maps to one SDK call, the status panel shows the SDK's resolved configuration
- * (version, identity, endpoints) plus the {@link AutoTracker} session, and the bottom panel
+ * (version, identity, endpoints) plus the automatic session, and the bottom panel
  * mirrors the SDK's logcat output so you can watch requests go out without a connected debugger.
  *
- * The SDK itself is initialised in {@link DebugApplication}; automatic events (screens,
- * open/background, install/update, deep links) come from {@link AutoTracker}.
+ * The SDK itself is initialised in {@link DebugApplication}; automatic events and the durable
+ * session come from the SDK's AutoTrackOptions (rockstat fork).
  *
  * SDK docs: https://docs.mixpanel.com/docs/tracking-methods/sdks/android
  * Source:   https://github.com/mixpanel/mixpanel-android
@@ -45,7 +42,6 @@ public class MainActivity extends Activity {
 
     private MixpanelAPI mMixpanel;
     private MPConfig mConfig;
-    private AutoTracker mAutoTracker;
 
     private TextView mStatusView;
     private TextView mLogView;
@@ -72,7 +68,6 @@ public class MainActivity extends Activity {
 
         final DebugApplication app = DebugApplication.from(this);
         mMixpanel = app.mixpanel();
-        mAutoTracker = app.autoTracker();
         // MPConfig exposes everything the SDK resolved from the manifest (endpoints, intervals...).
         mConfig = MPConfig.getInstance(this, null);
 
@@ -83,7 +78,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        // "$screen" and "Application Opened" are sent by AutoTracker; nothing to do here.
+        // "$screen" and "Application Opened" are sent by the SDK (AutoTrackOptions); nothing to do here.
         refreshStatus(null);
     }
 
@@ -130,10 +125,8 @@ public class MainActivity extends Activity {
         sb.append("$device_id       ").append(mMixpanel.getAnonymousId()).append('\n');
         sb.append("opted out        ").append(mMixpanel.hasOptedOutTracking()).append('\n');
         sb.append("automatic events ").append(DebugApplication.TRACK_AUTOMATIC_EVENTS).append('\n');
-        sb.append("session id       ").append(mAutoTracker.sessionId()).append('\n');
-        sb.append("session start    ").append(formatTime(mAutoTracker.sessionStartMs())).append('\n');
-        sb.append("last activity    ").append(formatTime(mAutoTracker.lastActivityMs())).append('\n');
-        sb.append("session timeout  ").append(mAutoTracker.sessionTimeoutMs() / 60000).append(" min\n");
+        sb.append("$session_id      ").append(mMixpanel.getAutoTrackSessionId()).append('\n');
+        sb.append("session idle t/o ").append(mConfig.getSessionIdleTimeout() / 60000).append(" min\n");
         sb.append("flush interval   ").append(mConfig.getFlushInterval()).append(" ms\n");
         sb.append("bulk upload lim. ").append(mConfig.getBulkUploadLimit()).append('\n');
         sb.append("flush batch size ").append(mConfig.getFlushBatchSize()).append('\n');
@@ -205,9 +198,7 @@ public class MainActivity extends Activity {
 
     public void resetIdentity(View view) {
         // Generates a fresh anonymous distinct_id and clears super properties, like a logout.
-        mMixpanel.reset();
-        // reset() wipes super properties, so AutoTracker re-registers $session_id with a new session.
-        mAutoTracker.onIdentityReset();
+        mMixpanel.reset(); // the SDK starts a new automatic session and re-registers $session_id
         mTimedEventRunning = false;
         mTimedEventButton.setText(R.string.button_timed_event_start);
         appendLog("app: reset()");
@@ -323,10 +314,6 @@ public class MainActivity extends Activity {
     private static String domainFromEmailAddress(String email) {
         final int at = email.indexOf('@');
         return at > -1 ? email.substring(at + 1) : "";
-    }
-
-    private static String formatTime(long millis) {
-        return millis == 0 ? "-" : new SimpleDateFormat("HH:mm:ss", Locale.US).format(new Date(millis));
     }
 
     private void toast(int resId) {
