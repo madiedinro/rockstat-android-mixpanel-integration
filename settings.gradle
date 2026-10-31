@@ -1,1 +1,1 @@
-include ":"
+rootProject.name = 'sample-android-mixpanel-integration'

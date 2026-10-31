@@ -1,12 +1,36 @@
-<?xml version="1.0" ?>
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Hello Mixpanel</string>
-    <string name="edit_first_name">First Name</string>
-    <string name="edit_last_name">Last Name</string>
-    <string name="edit_email_address">Email Address</string>
-    <string name="button_send">Send to Mixpanel</string>
-    <string name="button_buy">Send Revenue</string>
-    <string name="menu_settings">Settings</string>
-    <string name="title_activity_main">Hello Mixpanel</string>
-    <string name="button_background">Set background image</string>
+    <string name="app_name">Mixpanel Debug</string>
+    <string name="title_activity_main">Mixpanel SDK Debug</string>
+
+    <string name="section_status">SDK status</string>
+    <string name="section_events">Events</string>
+    <string name="section_identity">Identity</string>
+    <string name="section_people">People profile</string>
+    <string name="section_flags">Feature flags</string>
+    <string name="section_log">SDK log (logcat)</string>
+
+    <string name="edit_event_name">Event name (default: Test Event)</string>
+    <string name="edit_event_props">Properties as JSON, e.g. {"plan":"pro"}</string>
+    <string name="edit_distinct_id">distinct_id to identify</string>
+    <string name="edit_first_name">First name</string>
+    <string name="edit_last_name">Last name</string>
+    <string name="edit_email_address">Email address</string>
+
+    <string name="button_track">Track event</string>
+    <string name="button_timed_event_start">Start timed event</string>
+    <string name="button_timed_event_stop">Stop timed event</string>
+    <string name="button_flush">Flush now</string>
+    <string name="button_identify">Identify</string>
+    <string name="button_reset">Reset</string>
+    <string name="button_opt_out">Opt out</string>
+    <string name="button_opt_in">Opt in</string>
+    <string name="button_people_set">Update profile</string>
+    <string name="button_charge">Track charge $1.50</string>
+    <string name="button_load_flags">Load flags</string>
+    <string name="button_refresh_status">Refresh</string>
+    <string name="button_clear_log">Clear</string>
+
+    <string name="toast_invalid_json">Properties must be a valid JSON object</string>
+    <string name="toast_distinct_id_required">Enter a distinct_id first</string>
 </resources>

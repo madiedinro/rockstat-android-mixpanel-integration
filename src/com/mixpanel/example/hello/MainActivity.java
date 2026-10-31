@@ -1,317 +1,335 @@
 package com.mixpanel.example.hello;
 
 import android.app.Activity;
-import android.content.ContentResolver;
-import android.content.Intent;
-import android.content.SharedPreferences;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
-import android.graphics.drawable.BitmapDrawable;
-import android.net.Uri;
 import android.os.Bundle;
-import android.util.Base64;
-import android.util.Log;
-import android.view.Menu;
+import android.os.Handler;
+import android.os.Looper;
+import android.text.TextUtils;
 import android.view.View;
+import android.widget.Button;
 import android.widget.EditText;
+import android.widget.ScrollView;
+import android.widget.TextView;
+import android.widget.Toast;
 
+import com.mixpanel.android.mpmetrics.MPConfig;
 import com.mixpanel.android.mpmetrics.MixpanelAPI;
+import com.mixpanel.android.mpmetrics.MixpanelFlagVariant;
 
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import java.io.FileNotFoundException;
-import java.io.InputStream;
-import java.util.Calendar;
+import java.text.SimpleDateFormat;
 import java.util.Date;
-import java.util.Random;
+import java.util.Locale;
+import java.util.Map;
 
 /**
- * A little application that allows people to update their Mixpanel information,
- * and receive push notifications from a Mixpanel project.
+ * A small playground for debugging the Mixpanel Android SDK.
  *
- * For more information about integrating Mixpanel with your Android application,
- * please check out:
+ * Every button maps to one SDK call, the status panel shows the SDK's resolved configuration
+ * (version, identity, endpoints) plus the {@link AutoTracker} session, and the bottom panel
+ * mirrors the SDK's logcat output so you can watch requests go out without a connected debugger.
  *
- *     https://mixpanel.com/docs/integration-libraries/android
+ * The SDK itself is initialised in {@link DebugApplication}; automatic events (screens,
+ * open/background, install/update, deep links) come from {@link AutoTracker}.
  *
- * For instructions on enabling push notifications from Mixpanel, please see
- *
- *     https://mixpanel.com/docs/people-analytics/android-push
- *
- * @author mixpanel
- *
+ * SDK docs: https://docs.mixpanel.com/docs/tracking-methods/sdks/android
+ * Source:   https://github.com/mixpanel/mixpanel-android
  */
 public class MainActivity extends Activity {
 
-    /*
-     * You will use a Mixpanel API token to allow your app to send data to Mixpanel. To get your token
-     * - Log in to Mixpanel, and select the project you want to use for this application
-     * - Click the gear icon in the lower left corner of the screen to view the settings dialog
-     * - In the settings dialog, you will see the label "Token", and a string that looks something like this:
-     *
-     *        2ef3c08e8466df98e67ea0cfa1512e9f
-     *
-     *   Paste it below (where you see "YOUR API TOKEN")
-     */
-    public static final String MIXPANEL_API_TOKEN = "fa45c697d1c664abb760166578f91f24";
+    private static final String DEFAULT_EVENT_NAME = "Test Event";
+    private static final String TIMED_EVENT_NAME = "Timed Event";
+    private static final int MAX_LOG_CHARS = 60_000;
 
-    /*
-     * In order for your app to receive push notifications, you will need to enable
-     * the Google Cloud Messaging for Android service in your Google APIs console. To do this:
-     *
-     * - Navigate to https://code.google.com/apis/console
-     * - Select "Services" from the menu on the left side of the screen
-     * - Scroll down until you see the row labeled "Google Cloud Messaging for Android"
-     * - Make sure the switch next to the service name says "On"
-     *
-     * To identify this application with your Google API account, you'll also need your sender id from Google.
-     * You can get yours by logging in to the Google APIs Console at https://code.google.com/apis/console
-     * Once you have logged in, your sender id will appear as part of the URL in your browser's address bar.
-     * The URL will look something like this:
-     *
-     *     https://code.google.com/apis/console/b/0/#project:256660625236
-     *                                                       ^^^^^^^^^^^^
-     *
-     * The twelve-digit number after 'project:' is your sender id. Paste it below (where you see "YOUR SENDER ID")
-     *
-     * There are also some changes you will need to make to your AndroidManifest.xml file to
-     * declare the permissions and receiver capabilities you'll need to get your push notifications working.
-     * You can take a look at this application's AndroidManifest.xml file for an example of what is needed.
-     */
+    private MixpanelAPI mMixpanel;
+    private MPConfig mConfig;
+    private AutoTracker mAutoTracker;
+
+    private TextView mStatusView;
+    private TextView mLogView;
+    private ScrollView mLogScroll;
+    private EditText mEventNameEdit;
+    private EditText mEventPropsEdit;
+    private EditText mDistinctIdEdit;
+    private EditText mFirstNameEdit;
+    private EditText mLastNameEdit;
+    private EditText mEmailEdit;
+    private Button mTimedEventButton;
+    private Button mOptOutButton;
+
+    private boolean mTimedEventRunning;
+    private int mEventCounter;
+    private LogcatReader mLogcatReader;
+    private final Handler mMainHandler = new Handler(Looper.getMainLooper());
 
     @Override
-    public void onCreate(Bundle savedInstanceState) {
+    protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        final String trackingDistinctId = getTrackingDistinctId();
-
-        // Initialize the Mixpanel library for tracking and push notifications.
-        mMixpanel = MixpanelAPI.getInstance(this, MIXPANEL_API_TOKEN);
-
-
-        // We also identify the current user with a distinct ID, and
-        // register ourselves for push notifications from Mixpanel.
-
-        mMixpanel.identify(trackingDistinctId); //this is the distinct_id value that
-        // will be sent with events. If you choose not to set this,
-        // the SDK will generate one for you
-
-        mMixpanel.getPeople().identify(trackingDistinctId); //this is the distinct_id
-        // that will be used for people analytics. You must set this explicitly in order
-        // to dispatch people data.
-
-        // People analytics must be identified separately from event analytics.
-        // The data-sets are separate, and may have different unique keys (distinct_id).
-        // We recommend using the same distinct_id value for a given user in both,
-        // and identifying the user with that id as early as possible.
-
-
         setContentView(R.layout.activity_main);
-    }
+        bindViews();
 
-    @Override
-    public boolean onCreateOptionsMenu(Menu menu) {
-        getMenuInflater().inflate(R.menu.activity_main, menu);
-        return true;
+        final DebugApplication app = DebugApplication.from(this);
+        mMixpanel = app.mixpanel();
+        mAutoTracker = app.autoTracker();
+        // MPConfig exposes everything the SDK resolved from the manifest (endpoints, intervals...).
+        mConfig = MPConfig.getInstance(this, null);
+
+        startLogMirror();
+        refreshStatus(null);
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-
-        final long nowInHours = hoursSinceEpoch();
-        final int hourOfTheDay = hourOfTheDay();
-
-        // For our simple test app, we're interested tracking
-        // when the user views our application.
-
-        // It will be interesting to segment our data by the date that they
-        // first viewed our app. We use a
-        // superProperty (so the value will always be sent with the
-        // remainder of our events) and register it with
-        // registerSuperPropertiesOnce (so no matter how many times
-        // the code below is run, the events will always be sent
-        // with the value of the first ever call for this user.)
-        // all the change we make below are LOCAL. No API requests are made.
-        try {
-            final JSONObject properties = new JSONObject();
-            properties.put("first viewed on", nowInHours);
-            properties.put("user domain", "(unknown)"); // default value
-            mMixpanel.registerSuperPropertiesOnce(properties);
-        } catch (final JSONException e) {
-            throw new RuntimeException("Could not encode hour first viewed as JSON");
-        }
-
-        // Now we send an event to Mixpanel. We want to send a new
-        // "App Resumed" event every time we are resumed, and
-        // we want to send a current value of "hour of the day" for every event.
-        // As usual,all of the user's super properties will be appended onto this event.
-        try {
-            final JSONObject properties = new JSONObject();
-            properties.put("hour of the day", hourOfTheDay);
-            mMixpanel.track("App Resumed", properties);
-        } catch(final JSONException e) {
-            throw new RuntimeException("Could not encode hour of the day in JSON");
-        }
-
-        // If you have surveys or notifications, and you have set AutoShowMixpanelUpdates set to false,
-        // the onResume function is a good place to call the functions to display surveys or
-        // in app notifications. It is safe to call both these methods right after each other,
-        // since they do nothing if a notification or survey is already showing.
-        mMixpanel.getPeople().showNotificationIfAvailable(this);
-    }
-
-    // Associated with the "Send to Mixpanel" button in activity_main.xml
-    // In this method, we update a Mixpanel people profile using MixpanelAPI.People.set()
-    // and set some persistent properties that will be sent with
-    // all future track() calls using MixpanelAPI.registerSuperProperties()
-    public void sendToMixpanel(final View view) {
-
-        final EditText firstNameEdit = (EditText) findViewById(R.id.edit_first_name);
-        final EditText lastNameEdit = (EditText) findViewById(R.id.edit_last_name);
-        final EditText emailEdit = (EditText) findViewById(R.id.edit_email_address);
-
-        final String firstName = firstNameEdit.getText().toString();
-        final String lastName = lastNameEdit.getText().toString();
-        final String email = emailEdit.getText().toString();
-
-        final MixpanelAPI.People people = mMixpanel.getPeople();
-
-        // Update the basic data in the user's People Analytics record.
-        // Unlike events, People Analytics always stores the most recent value
-        // provided.
-        people.set("$first_name", firstName);
-        people.set("$last_name", lastName);
-        people.set("$email", email);
-
-        // We also want to keep track of how many times the user
-        // has updated their info.
-        people.increment("Update Count", 1L);
-
-        // Mixpanel events are separate from Mixpanel people records,
-        // but it might be valuable to be able to query events by
-        // user domain (for example, if they represent customer organizations).
-        //
-        // We use the user domain as a superProperty here, but we call registerSuperProperties
-        // instead of registerSuperPropertiesOnce so we can overwrite old values
-        // as we get new information.
-        try {
-            final JSONObject domainProperty = new JSONObject();
-            domainProperty.put("user domain", domainFromEmailAddress(email));
-            mMixpanel.registerSuperProperties(domainProperty);
-        } catch (final JSONException e) {
-            throw new RuntimeException("Cannot write user email address domain as a super property");
-        }
-
-        // In addition to viewing the updated record in mixpanel's UI, it might
-        // be interesting to see when and how many and what types of users
-        // are updating their information, so we'll send an event as well.
-        // You can call track with null if you don't have any properties to add
-        // to an event (remember all the established superProperties will be added
-        // before the event is dispatched to Mixpanel)
-        mMixpanel.track("update info button clicked", null);
-    }
-
-    // This is an example of how you can use Mixpanel's revenue tracking features from Android.
-    public void recordRevenue(final View view) {
-        final MixpanelAPI.People people = mMixpanel.getPeople();
-        // Call trackCharge() with a floating point amount
-        // (for example, the amount of money the user has just spent on a purchase)
-        // and an optional set of properties describing the purchase.
-        people.trackCharge(1.50, null);
+        // "$screen" and "Application Opened" are sent by AutoTracker; nothing to do here.
+        refreshStatus(null);
     }
 
     @Override
     protected void onDestroy() {
-        super.onDestroy();
-
-        // To preserve battery life, the Mixpanel library will store
-        // events rather than send them immediately. This means it
-        // is important to call flush() to send any unsent events
-        // before your application is taken out of memory.
+        if (mLogcatReader != null) {
+            mLogcatReader.stop();
+        }
+        // Push any pending events before the process can be killed.
         mMixpanel.flush();
+        super.onDestroy();
     }
 
-    ////////////////////////////////////////////////////
+    // ---------------------------------------------------------------------------------------------
+    // Setup
 
-    public void setBackgroundImage(final View view) {
-        final Intent photoPickerIntent = new Intent(Intent.ACTION_PICK);
-        photoPickerIntent.setType("image/*");
-        startActivityForResult(photoPickerIntent, PHOTO_WAS_PICKED);
+    private void bindViews() {
+        mStatusView = findViewById(R.id.text_status);
+        mLogView = findViewById(R.id.text_log);
+        mLogScroll = findViewById(R.id.scroll_log);
+        mEventNameEdit = findViewById(R.id.edit_event_name);
+        mEventPropsEdit = findViewById(R.id.edit_event_props);
+        mDistinctIdEdit = findViewById(R.id.edit_distinct_id);
+        mFirstNameEdit = findViewById(R.id.edit_first_name);
+        mLastNameEdit = findViewById(R.id.edit_last_name);
+        mEmailEdit = findViewById(R.id.edit_email_address);
+        mTimedEventButton = findViewById(R.id.button_timed_event);
+        mOptOutButton = findViewById(R.id.button_opt_out);
     }
 
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        if (PHOTO_WAS_PICKED == requestCode && null != data) {
-            final Uri imageUri = data.getData();
-            if (null != imageUri) {
-                // AsyncTask, please...
-                final ContentResolver contentResolver = getContentResolver();
-                try {
-                    final InputStream imageStream = contentResolver.openInputStream(imageUri);
-                    System.out.println("DRAWING IMAGE FROM URI " + imageUri);
-                    final Bitmap background = BitmapFactory.decodeStream(imageStream);
-                    getWindow().setBackgroundDrawable(new BitmapDrawable(getResources(), background));
-                } catch (final FileNotFoundException e) {
-                    Log.e(LOGTAG, "Image apparently has gone away", e);
-                }
+    private void startLogMirror() {
+        mLogcatReader = new LogcatReader("Mixpanel", line -> mMainHandler.post(() -> appendLog(line)));
+        mLogcatReader.start();
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Status
+
+    public void refreshStatus(View view) {
+        final StringBuilder sb = new StringBuilder();
+        sb.append("SDK version      ").append(MixpanelAPI.VERSION).append('\n');
+        sb.append("token            ").append(DebugApplication.MIXPANEL_API_TOKEN).append('\n');
+        sb.append("distinct_id      ").append(mMixpanel.getDistinctId()).append('\n');
+        sb.append("$device_id       ").append(mMixpanel.getAnonymousId()).append('\n');
+        sb.append("opted out        ").append(mMixpanel.hasOptedOutTracking()).append('\n');
+        sb.append("automatic events ").append(DebugApplication.TRACK_AUTOMATIC_EVENTS).append('\n');
+        sb.append("session id       ").append(mAutoTracker.sessionId()).append('\n');
+        sb.append("session start    ").append(formatTime(mAutoTracker.sessionStartMs())).append('\n');
+        sb.append("last activity    ").append(formatTime(mAutoTracker.lastActivityMs())).append('\n');
+        sb.append("session timeout  ").append(mAutoTracker.sessionTimeoutMs() / 60000).append(" min\n");
+        sb.append("flush interval   ").append(mConfig.getFlushInterval()).append(" ms\n");
+        sb.append("bulk upload lim. ").append(mConfig.getBulkUploadLimit()).append('\n');
+        sb.append("flush batch size ").append(mConfig.getFlushBatchSize()).append('\n');
+        sb.append("flush on bg      ").append(mConfig.getFlushOnBackground()).append('\n');
+        sb.append("events  -> ").append(mConfig.getEventsEndpoint()).append('\n');
+        sb.append("people  -> ").append(mConfig.getPeopleEndpoint()).append('\n');
+        sb.append("groups  -> ").append(mConfig.getGroupsEndpoint()).append('\n');
+        sb.append("flags   -> ").append(mConfig.getFlagsEndpoint()).append('\n');
+        sb.append("super properties ").append(mMixpanel.getSuperProperties());
+        mStatusView.setText(sb);
+
+        mOptOutButton.setText(mMixpanel.hasOptedOutTracking()
+                ? R.string.button_opt_in : R.string.button_opt_out);
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Events
+
+    public void trackEvent(View view) {
+        final String name = textOf(mEventNameEdit, DEFAULT_EVENT_NAME);
+        final JSONObject properties = parseProperties();
+        if (properties == null) {
+            return;
+        }
+        try {
+            properties.put("counter", ++mEventCounter);
+        } catch (JSONException e) {
+            throw new IllegalStateException(e);
+        }
+        mMixpanel.track(name, properties);
+        appendLog("app: track(\"" + name + "\", " + properties + ")");
+    }
+
+    public void toggleTimedEvent(View view) {
+        if (!mTimedEventRunning) {
+            // Starts a timer; the next track() of the same name gets a $duration property.
+            mMixpanel.timeEvent(TIMED_EVENT_NAME);
+            mTimedEventRunning = true;
+            mTimedEventButton.setText(R.string.button_timed_event_stop);
+            appendLog("app: timeEvent(\"" + TIMED_EVENT_NAME + "\")");
+        } else {
+            mMixpanel.track(TIMED_EVENT_NAME);
+            mTimedEventRunning = false;
+            mTimedEventButton.setText(R.string.button_timed_event_start);
+            appendLog("app: track(\"" + TIMED_EVENT_NAME + "\") with $duration");
+        }
+    }
+
+    public void flushQueue(View view) {
+        mMixpanel.flush();
+        appendLog("app: flush()");
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Identity
+
+    public void identifyUser(View view) {
+        final String distinctId = textOf(mDistinctIdEdit, null);
+        if (distinctId == null) {
+            toast(R.string.toast_distinct_id_required);
+            return;
+        }
+        // Since SDK 6 identify() covers both events and People, and sends $identify when the
+        // anonymous and identified ids differ.
+        mMixpanel.identify(distinctId);
+        appendLog("app: identify(\"" + distinctId + "\")");
+        refreshStatus(null);
+    }
+
+    public void resetIdentity(View view) {
+        // Generates a fresh anonymous distinct_id and clears super properties, like a logout.
+        mMixpanel.reset();
+        // reset() wipes super properties, so AutoTracker re-registers $session_id with a new session.
+        mAutoTracker.onIdentityReset();
+        mTimedEventRunning = false;
+        mTimedEventButton.setText(R.string.button_timed_event_start);
+        appendLog("app: reset()");
+        refreshStatus(null);
+    }
+
+    public void toggleOptOut(View view) {
+        if (mMixpanel.hasOptedOutTracking()) {
+            mMixpanel.optInTracking();
+            appendLog("app: optInTracking()");
+        } else {
+            // Drops queued data and ignores every call until opt-in.
+            mMixpanel.optOutTracking();
+            appendLog("app: optOutTracking()");
+        }
+        refreshStatus(null);
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // People
+
+    public void updateProfile(View view) {
+        final String firstName = textOf(mFirstNameEdit, "");
+        final String lastName = textOf(mLastNameEdit, "");
+        final String email = textOf(mEmailEdit, "");
+
+        final MixpanelAPI.People people = mMixpanel.getPeople();
+        // People profiles keep the latest value for each property.
+        people.set("$first_name", firstName);
+        people.set("$last_name", lastName);
+        people.set("$email", email);
+        people.increment("Update Count", 1L);
+
+        // Super properties ride along with every subsequent event.
+        try {
+            final JSONObject superProperties = new JSONObject();
+            superProperties.put("user domain", domainFromEmailAddress(email));
+            mMixpanel.registerSuperProperties(superProperties);
+        } catch (JSONException e) {
+            throw new IllegalStateException(e);
+        }
+
+        mMixpanel.track("update info button clicked");
+        appendLog("app: people.set($first_name/$last_name/$email), increment(Update Count)");
+        refreshStatus(null);
+    }
+
+    public void recordRevenue(View view) {
+        // Appends a $transactions entry to the profile.
+        mMixpanel.getPeople().trackCharge(1.50, null);
+        appendLog("app: people.trackCharge(1.50)");
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Feature flags
+
+    public void loadFlags(View view) {
+        appendLog("app: flags.loadFlags()");
+        mMixpanel.getFlags().loadFlags(success -> mMainHandler.post(() -> {
+            if (!Boolean.TRUE.equals(success)) {
+                appendLog("app: flags fetch FAILED (see MixpanelAPI log above)");
+                return;
             }
+            final Map<String, MixpanelFlagVariant> variants = mMixpanel.getFlags().getAllVariantsSync();
+            if (variants.isEmpty()) {
+                appendLog("app: flags fetched, no flags defined for this project");
+                return;
+            }
+            for (Map.Entry<String, MixpanelFlagVariant> entry : variants.entrySet()) {
+                final MixpanelFlagVariant variant = entry.getValue();
+                appendLog("app: flag " + entry.getKey() + " = " + variant.key + " -> " + variant.value);
+            }
+        }));
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Log panel
+
+    public void clearLog(View view) {
+        mLogView.setText("");
+    }
+
+    private void appendLog(String line) {
+        final CharSequence current = mLogView.getText();
+        final String next = current.length() == 0 ? line : current + "\n" + line;
+        // Keep only the tail so the TextView stays responsive during long sessions.
+        mLogView.setText(next.length() > MAX_LOG_CHARS
+                ? next.substring(next.length() - MAX_LOG_CHARS) : next);
+        mLogScroll.post(() -> mLogScroll.fullScroll(View.FOCUS_DOWN));
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Helpers
+
+    private JSONObject parseProperties() {
+        final String raw = mEventPropsEdit.getText().toString().trim();
+        if (raw.isEmpty()) {
+            return new JSONObject();
+        }
+        try {
+            return new JSONObject(raw);
+        } catch (JSONException e) {
+            toast(R.string.toast_invalid_json);
+            return null;
         }
     }
 
-    private String getTrackingDistinctId() {
-        final SharedPreferences prefs = getPreferences(MODE_PRIVATE);
-
-        String ret = prefs.getString(MIXPANEL_DISTINCT_ID_NAME, null);
-        if (ret == null) {
-            ret = generateDistinctId();
-            final SharedPreferences.Editor prefsEditor = prefs.edit();
-            prefsEditor.putString(MIXPANEL_DISTINCT_ID_NAME, ret);
-            prefsEditor.commit();
-        }
-
-        return ret;
+    private static String textOf(EditText edit, String fallback) {
+        final String value = edit.getText().toString().trim();
+        return TextUtils.isEmpty(value) ? fallback : value;
     }
 
-    // These disinct ids are here for the purposes of illustration.
-    // In practice, there are great advantages to using distinct ids that
-    // are easily associated with user identity, either from server-side
-    // sources, or user logins. A common best practice is to maintain a field
-    // in your users table to store mixpanel distinct_id, so it is easily
-    // accesible for use in attributing cross platform or server side events.
-    private String generateDistinctId() {
-        final Random random = new Random();
-        final byte[] randomBytes = new byte[32];
-        random.nextBytes(randomBytes);
-        return Base64.encodeToString(randomBytes, Base64.NO_WRAP | Base64.NO_PADDING);
+    private static String domainFromEmailAddress(String email) {
+        final int at = email.indexOf('@');
+        return at > -1 ? email.substring(at + 1) : "";
     }
 
-    ///////////////////////////////////////////////////////
-    // conveniences
-
-    private int hourOfTheDay() {
-        final Calendar calendar = Calendar.getInstance();
-        return calendar.get(Calendar.HOUR_OF_DAY);
+    private static String formatTime(long millis) {
+        return millis == 0 ? "-" : new SimpleDateFormat("HH:mm:ss", Locale.US).format(new Date(millis));
     }
 
-    private long hoursSinceEpoch() {
-        final Date now = new Date();
-        final long nowMillis = now.getTime();
-        return nowMillis / 1000 * 60 * 60;
+    private void toast(int resId) {
+        Toast.makeText(this, resId, Toast.LENGTH_SHORT).show();
     }
-
-    private String domainFromEmailAddress(String email) {
-        String ret = "";
-        final int atSymbolIndex = email.indexOf('@');
-        if ((atSymbolIndex > -1) && (email.length() > atSymbolIndex)) {
-            ret = email.substring(atSymbolIndex + 1);
-        }
-
-        return ret;
-    }
-
-    private MixpanelAPI mMixpanel;
-    private static final String MIXPANEL_DISTINCT_ID_NAME = "Mixpanel Example $distinctid";
-    private static final int PHOTO_WAS_PICKED = 2;
-    private static final String LOGTAG = "Mixpanel Example Application";
 }

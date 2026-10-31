@@ -1,43 +1,226 @@
+<?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:orientation="vertical" >
+    android:layout_height="match_parent"
+    android:orientation="vertical">
 
-    <EditText
-        android:id="@+id/edit_first_name"
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <!-- ===== Status ===== -->
+            <TextView
+                style="@style/SectionHeader"
+                android:text="@string/section_status" />
+
+            <TextView
+                android:id="@+id/text_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:textIsSelectable="true"
+                android:textSize="11sp" />
+
+            <Button
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:onClick="refreshStatus"
+                android:text="@string/button_refresh_status" />
+
+            <!-- ===== Events ===== -->
+            <TextView
+                style="@style/SectionHeader"
+                android:text="@string/section_events" />
+
+            <EditText
+                android:id="@+id/edit_event_name"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="@string/edit_event_name"
+                android:inputType="text" />
+
+            <EditText
+                android:id="@+id/edit_event_props"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:hint="@string/edit_event_props"
+                android:inputType="textMultiLine|textNoSuggestions" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <Button
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:onClick="trackEvent"
+                    android:text="@string/button_track" />
+
+                <Button
+                    android:id="@+id/button_timed_event"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:onClick="toggleTimedEvent"
+                    android:text="@string/button_timed_event_start" />
+
+                <Button
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:onClick="flushQueue"
+                    android:text="@string/button_flush" />
+            </LinearLayout>
+
+            <!-- ===== Identity ===== -->
+            <TextView
+                style="@style/SectionHeader"
+                android:text="@string/section_identity" />
+
+            <EditText
+                android:id="@+id/edit_distinct_id"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="@string/edit_distinct_id"
+                android:inputType="text|textNoSuggestions" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <Button
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:onClick="identifyUser"
+                    android:text="@string/button_identify" />
+
+                <Button
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:onClick="resetIdentity"
+                    android:text="@string/button_reset" />
+
+                <Button
+                    android:id="@+id/button_opt_out"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:onClick="toggleOptOut"
+                    android:text="@string/button_opt_out" />
+            </LinearLayout>
+
+            <!-- ===== People ===== -->
+            <TextView
+                style="@style/SectionHeader"
+                android:text="@string/section_people" />
+
+            <EditText
+                android:id="@+id/edit_first_name"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="@string/edit_first_name"
+                android:inputType="textPersonName" />
+
+            <EditText
+                android:id="@+id/edit_last_name"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="@string/edit_last_name"
+                android:inputType="textPersonName" />
+
+            <EditText
+                android:id="@+id/edit_email_address"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="@string/edit_email_address"
+                android:inputType="textEmailAddress" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <Button
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:onClick="updateProfile"
+                    android:text="@string/button_people_set" />
+
+                <Button
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:onClick="recordRevenue"
+                    android:text="@string/button_charge" />
+            </LinearLayout>
+
+            <!-- ===== Feature flags ===== -->
+            <TextView
+                style="@style/SectionHeader"
+                android:text="@string/section_flags" />
+
+            <Button
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:onClick="loadFlags"
+                android:text="@string/button_load_flags" />
+        </LinearLayout>
+    </ScrollView>
+
+    <!-- ===== Live SDK log ===== -->
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:hint="@string/edit_first_name" />
+        android:background="#EEEEEE"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="12dp"
+        android:paddingEnd="4dp">
 
-    <EditText
-        android:id="@+id/edit_last_name"
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/section_log"
+            android:textStyle="bold" />
+
+        <Button
+            style="?android:attr/buttonBarButtonStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:onClick="clearLog"
+            android:text="@string/button_clear_log" />
+    </LinearLayout>
+
+    <ScrollView
+        android:id="@+id/scroll_log"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:hint="@string/edit_last_name" />
+        android:layout_height="220dp"
+        android:background="#1E1E1E">
 
-    <EditText
-        android:id="@+id/edit_email_address"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:hint="@string/edit_email_address" />
-
-    <Button
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/button_send"
-        android:onClick="sendToMixpanel" />
-
-    <Button
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/button_buy"
-        android:onClick="recordRevenue" />
-
-    <Button
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/button_background"
-        android:onClick="setBackgroundImage" />
+        <TextView
+            android:id="@+id/text_log"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:padding="8dp"
+            android:textColor="#D4D4D4"
+            android:textIsSelectable="true"
+            android:textSize="10sp" />
+    </ScrollView>
 </LinearLayout>
-

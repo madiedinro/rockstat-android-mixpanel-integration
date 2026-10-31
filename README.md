@@ -1,82 +1,113 @@
-# Sample Android Application for Mixpanel Integration
+# Mixpanel Android SDK debug sample
 
-This repository contains a sample application demonstrating how you
-can use Mixpanel in your Android apps.
+A minimal Android app for poking at the
+[Mixpanel Android SDK](https://github.com/mixpanel/mixpanel-android) (currently **8.12.0**).
+Every button is one SDK call, the status panel shows what the SDK resolved from the manifest
+(version, `distinct_id`, endpoints, flush settings), and the bottom panel mirrors the SDK's logcat
+output so you can watch requests leave the device without attaching a debugger.
 
-## Getting Started
+## What you can do from the UI
 
-The sample application can be build using Android Studio.
+| Section       | Buttons                                   | SDK calls                                                   |
+|---------------|-------------------------------------------|-------------------------------------------------------------|
+| Events        | Track event, Start/Stop timed event, Flush | `track()`, `timeEvent()`, `flush()`                          |
+| Identity      | Identify, Reset, Opt out / Opt in          | `identify()`, `reset()`, `optOutTracking()` / `optInTracking()` |
+| People        | Update profile, Track charge               | `People.set()`, `People.increment()`, `People.trackCharge()`, `registerSuperProperties()` |
+| Feature flags | Load flags                                 | `getFlags().loadFlags()`, `getFlags().getAllVariantsSync()`  |
 
-### Using Android Studio
-Integration in Android Studio is very simple.
+Event properties are entered as a JSON object; a `counter` property is appended automatically.
+The SDK is initialised in `DebugApplication.java`, where the automatic-event and autocapture flags
+and the session timeout live.
 
-- Clone this git repository (the instructions are at the top of the page)
-- Within Android Studio, go to "File > Import Project"
-- Select the directory you just cloned.
-- When the gradle popup shows up, choose "use gradle default wrapper (recommended)" and click OK
+## Automatic events and sessions (`AutoTracker.java`)
 
-You should now be able to run the sample application
+`AutoTracker` is installed from `DebugApplication` and mirrors PostHog's Android autocapture on top
+of the Mixpanel SDK:
 
-You will also need to add your Mixpanel API token and your Android
-Push Sender id to the source code, and enable Mixpanel to send Google
-Cloud Messages on your behalf.
+| Event                      | When                                   | Properties                                   |
+|----------------------------|----------------------------------------|----------------------------------------------|
+| `Application Installed`    | first launch ever                      | `version`, `build`                           |
+| `Application Updated`      | first launch of a new `versionCode`    | `previous_version`, `previous_build`, ...    |
+| `Application Opened`       | app enters foreground (process level)  | `from_background`, `version`, `build`        |
+| `Application Backgrounded` | app leaves foreground (process level)  | `session_length_s`, `version`, `build`       |
+| `$screen`                  | every Activity resume (deduplicated)   | `$screen_name`, `$screen_class`              |
+| `Deep Link Opened`         | Activity created with an intent URI    | `url`, `referrer`                            |
 
-## Add your Mixpanel Token to your code and google-services.json file to your project
-There is one value in MainActivity.java that you'll need to update
-before you can send data to Mixpanel. You'll need to update the source code with
-your Mixpanel API Token to send data.
+Every event also carries the super properties `$session_id` and `$session_start`.
 
-### For Your Mixpanel Token
+### Why the SDK's own session breaks when the app is closed
 
-- Log in to your account at https://www.mixpanel.com
-- Select the project you'll be working with from the drop-down at the top left
-- Click the gear link at the top right to show the project settings dialog
-- Copy the "Token" string from the dialog
+The SDK's `$ae_session` is produced by `MixpanelActivityLifecycleCallbacks`: when the last Activity
+pauses it posts a Runnable with a 500 ms delay, and only that Runnable tracks `$ae_session` and
+triggers the background flush. `$mp_session_id` (the `$mp_metadata` session) is regenerated on
+every foreground, with no inactivity timeout. Consequences:
 
-Change the value of MainActivity.MIXPANEL_API_TOKEN to the value you
-copied from the web page.
+* Swipe the app away from Recents, or let the OS kill it, and the Runnable never runs:
+  the session has no end event at all.
+* Even when `$ae_session` is tracked, the flush is asynchronous; a kill right after leaves it in
+  SQLite until the next launch.
+* Any trip to another app, however short, starts a new `$mp_session_id` and resets the session
+  timer, so one user session shows up as several.
+* Sessions shorter than `MinimumSessionDuration` (3 s in this manifest, 10 s by default) are
+  dropped silently.
 
-### For enabling push notifications using FCM
+`AutoTracker` works around all four without touching the SDK:
 
-- Log in to your Firebase Console at https://console.firebase.google.com
-- Select your project and click on the gear (top left corner) to access your Project settings
-- Go to "Cloud Messaging" tab
-- Scroll down and click on "google-services.json" to download your config file.
-- Place your file on your app module directory.
+* The session is a UUID in `SharedPreferences`, persisted on every resume/pause/foreground/
+  background, and continued across backgrounds and process restarts while the gap is under
+  `SESSION_TIMEOUT_MS` (30 min, like PostHog).
+* Foreground/background come from `ProcessLifecycleOwner`, not from individual Activities.
+* `flush()` is called immediately in `onStop`, before the SDK's 500 ms delay.
+* If the process died while foregrounded, the next launch back-fills `Application Backgrounded`
+  with the last persisted timestamp (the SDK lets caller properties override `time`), so the
+  previous session still ends on the server side.
 
-## Set up Firebase Cloud Messaging services in Mixpanel
+`MixpanelAPI.reset()` wipes super properties, so `MainActivity` calls
+`AutoTracker.onIdentityReset()` afterwards to start a fresh session.
 
-To send Firebase Cloud Messages, you will also have to connect Mixpanel
-to your Google APIs account. To do this you'll need to make sure Cloud
-Messaging is enabled, and provide an FCM Server key to Mixpanel
+If you prefer Mixpanel's native screen events, `mixpanel.getAutocapture().trackScreenView(name)`
+sends `$mp_page_view` instead of `$screen`.
 
-This process is documented in more detail, including screenshots, at
+## Configuration
 
-https://mixpanel.com/docs/people-analytics/android-push
+* **Project token**: `MainActivity.MIXPANEL_API_TOKEN`.
+* **Everything else** is `<meta-data>` in `AndroidManifest.xml`: debug logging, a 5 s flush
+  interval, a bulk-upload limit of 5 records, `$app_open` enabled, and custom
+  `EventsEndpoint` / `PeopleEndpoint` / `GroupsEndpoint` pointing at a proxy. Uncomment
+  `FlagsEndpoint` to proxy feature flags too. Supported keys are listed in the SDK's
+  [`MPConfig.java`](https://github.com/mixpanel/mixpanel-android/blob/master/analytics/src/main/java/com/mixpanel/android/mpmetrics/MPConfig.java).
 
-### To Provide your Firebase Server Key to Mixpanel
+  Keep `UseIpAddressForGeolocation` unset when you use custom endpoints: when the key is present
+  the SDK appends `?ip=0|1` to the URLs, when it is absent the URLs are used verbatim.
 
-- Log in to your Firebase Console Console at https://console.firebase.google.com
-- Select your project and click on the gear (top left corner) to access your Project settings
-- Go to "Cloud Messaging" tab
-- Copy your "Server key"
-- Log in to Mixpanel at http://www.mixpanel.com, and select the project associated with this application
-- Click the gear icon in the upper right corner of the screen to show the project settings dialog
-- Click on the Messages tab of the project settings dialog
-- Paste your Firebase Server Key into the "Android FCM Server Key" field
+## Building
 
-Once you've added your keys to the source code and set up Mixpanel to
-send Firebase Cloud Messages, you're ready to build and deploy your application.
+Requirements: JDK 17, Android SDK platform 35 and build-tools 35.0.0 (Android Studio installs
+these for you).
 
-## Getting More Information
+```sh
+export JAVA_HOME=$(/usr/libexec/java_home -v 17)   # or your JDK 17 path
+./gradlew assembleDebug
+adb install -r build/outputs/apk/debug/sample-android-mixpanel-integration-debug.apk
+```
 
-The Mixpanel Android integration API documentation is available on the Mixpanel website.
+Or open the directory in Android Studio and run the `sample-android-mixpanel-integration`
+configuration.
 
-For an overview of Mixpanel Android library features
-: https://mixpanel.com/help/reference/android
+`local.properties` must point `sdk.dir` at your Android SDK.
 
-For details about setting up and implementing Google Cloud Messaging Notifications
-: https://mixpanel.com/help/reference/android-push-notifications
+## Watching traffic
 
-For a detailed Android API reference
-: http://mixpanel.github.io/mixpanel-android/index.html
+The in-app log panel shows lines with the `MixpanelAPI.*` tags. The same output is available with:
+
+```sh
+adb logcat -v time | grep MixpanelAPI
+```
+
+## History
+
+Earlier versions of this sample targeted SDK 5.x and demonstrated Mixpanel push notifications,
+in-app messages and the `decide` endpoint. Those features were removed from the SDK in 6.0 / 7.0,
+so the Firebase dependency, `google-services.json`, `TakeoverInAppActivity` and
+`MixpanelFCMMessagingService` are gone from this project, and the old unsupported
+`SessionManager.java` example was replaced by `AutoTracker.java`.
