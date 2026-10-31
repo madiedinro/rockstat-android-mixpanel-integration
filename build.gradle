@@ -1,0 +1,24 @@
+buildscript {
+    repositories {
+        mavenCentral()
+        google()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.13.2'
+        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:2.1.0'
+        classpath 'org.jetbrains.kotlin:compose-compiler-gradle-plugin:2.1.0'
+        classpath 'org.jetbrains.kotlin:kotlin-serialization:2.0.21'
+    }
+}
+
+allprojects {
+    gradle.projectsEvaluated {
+        tasks.withType(JavaCompile) {
+            options.compilerArgs << "-Xlint:unchecked" << "-Xlint:deprecation"
+        }
+    }
+    repositories {
+        mavenCentral()
+        google()
+    }
+}

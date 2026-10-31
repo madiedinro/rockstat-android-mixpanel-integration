@@ -1,0 +1,47 @@
+# EditorConfig helps developers define and maintain consistent
+# coding styles between different editors and IDEs
+# https://editorconfig.org
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+indent_size = 4
+indent_style = space
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{kt,kts}]
+# Kotlin/ktlint style settings (source of truth for both IDE and Gradle builds)
+indent_size = 4
+ij_continuation_indent_size = 4
+ktlint_code_style = android_studio
+ktlint_standard_discouraged-comment-location = disabled
+ktlint_standard_import-ordering = disabled
+ktlint_standard_function-signature = disabled
+ktlint_standard_class-signature = disabled
+ktlint_standard_package-name = disabled
+ktlint_standard_value-parameter-comment = disabled
+ktlint_function_naming_ignore_when_annotated_with = Composable
+max_line_length = 150
+
+[*.md]
+trim_trailing_whitespace = false
+
+[*.yml]
+indent_size = 2
+
+[*.yaml]
+indent_size = 2
+
+[*.json]
+indent_size = 2
+
+# Wireframe goldens are compared byte-for-byte and the format deliberately ends
+# without a trailing newline, so the same scenario produces an identical file on
+# Android, iOS and Flutter. `insert_final_newline` silently appends one the moment
+# an editor touches a golden, which then fails the suite with a diff that shows
+# nothing -- the change is invisible in a normal diff view.
+[session-replay/wireframe-goldens/src/test/golden/wireframe/*.json]
+insert_final_newline = false
